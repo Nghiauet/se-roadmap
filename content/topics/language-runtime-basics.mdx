@@ -1,0 +1,92 @@
+<Lead>
+Frameworks hide the runtime until something gets slow, stuck, or memory-hungry. Knowing
+how code actually runs helps you debug performance and choose safer architecture.
+</Lead>
+
+## The big idea
+
+Your code runs inside a runtime that manages memory, schedules work, talks to the OS, and
+decides how concurrency happens.
+
+<LayerStack
+  layers={[
+    { label: 'Application code', detail: 'handlers, services, jobs' },
+    { label: 'Runtime', detail: 'VM, GC, event loop, thread pool' },
+    { label: 'OS process', detail: 'memory, files, sockets, signals' },
+    { label: 'Kernel', detail: 'CPU scheduling, network, disk' },
+  ]}
+/>
+
+When production is slow, the bug may be in any of those layers.
+
+## Stack and heap
+
+<DefinitionList>
+  <Definition term="Stack">Function calls and short-lived local state. Fast, structured, limited.</Definition>
+  <Definition term="Heap">Objects that outlive one call frame. Flexible, garbage-collected or manually managed.</Definition>
+  <Definition term="Pointer/reference">A small value that points at data somewhere else.</Definition>
+  <Definition term="Garbage collection">Runtime cleanup of unreachable heap objects.</Definition>
+</DefinitionList>
+
+Memory leaks in garbage-collected languages still happen: a cache, global list, closure,
+or listener can keep references alive forever.
+
+## Processes, threads, and async
+
+<Comparison
+  leftTitle="What it is"
+  rightTitle="Trade-off"
+  rows={[
+    { attribute: 'Process', left: 'Own memory space', right: 'Strong isolation, heavier startup' },
+    { attribute: 'Thread', left: 'Shares process memory', right: 'Cheap sharing, synchronization risk' },
+    { attribute: 'Coroutine/task', left: 'Runtime-scheduled work', right: 'Great for I/O, not magic CPU parallelism' },
+    { attribute: 'Event loop', left: 'One loop dispatches callbacks', right: 'Blocked by long CPU work' },
+  ]}
+/>
+
+Async code helps when waiting on network, disk, or timers. It does not make CPU-heavy code
+free. A single blocking loop can freeze an event-loop service.
+
+## Common runtime failures
+
+<DefinitionList>
+  <Definition term="High CPU">Hot loop, expensive serialization, compression, crypto, or too much concurrency.</Definition>
+  <Definition term="High memory">Unbounded cache, large response, leaked listeners, or data loaded all at once.</Definition>
+  <Definition term="Stuck requests">Thread pool exhaustion, blocked event loop, missing timeout, or deadlock.</Definition>
+  <Definition term="Slow startup">Heavy imports, migrations at boot, cold caches, or synchronous network calls.</Definition>
+</DefinitionList>
+
+## What to inspect
+
+```bash
+top
+ps -o pid,ppid,%cpu,%mem,cmd -p <pid>
+lsof -p <pid>
+curl -w '%{time_total}\n' -o /dev/null -s http://localhost:3000/
+```
+
+In language-specific tools, learn the profiler, heap snapshot, thread dump, or event-loop
+delay monitor for the runtime you use most.
+
+## Runtime-specific instincts
+
+- Node.js: avoid long CPU work on the event loop; watch event-loop delay.
+- Python: understand the GIL; use async for I/O and workers/processes for CPU.
+- Java/JVM: watch heap size, GC pauses, thread pools, and warmup.
+- Go: goroutines are cheap, but leaks and unbounded channels still hurt.
+
+## In practice
+
+Write a tiny endpoint that sleeps, another that loops CPU for two seconds, and another
+that allocates a large array. Hit each with concurrent requests. Watch how the runtime
+behaves. This is more memorable than a page of definitions.
+
+<KeyTakeaways
+  items={[
+    "The runtime schedules work, manages memory, and turns code into OS activity.",
+    "Garbage collection prevents many manual frees, but not leaked references.",
+    "Async helps I/O waits; CPU-heavy code still needs separate capacity.",
+    "Threads, processes, event loops, and coroutines fail in different ways.",
+    "Learn one profiler or runtime inspection tool before you need it in an outage.",
+  ]}
+/>

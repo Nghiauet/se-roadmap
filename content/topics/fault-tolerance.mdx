@@ -1,0 +1,174 @@
+<Lead>
+Failures aren't exceptions; they're a property of distributed systems. Build in retries,
+timeouts, circuit breakers, and graceful degradation — your reliability isn't the
+weakest dependency, it's how well you handle the weakest dependency failing.
+</Lead>
+
+## The big idea
+
+Every network call **will eventually fail**. The interesting question is how the failure
+cascades. Three tools, in escalating order:
+
+<BoxFlow
+  direction="vertical"
+  nodes={[
+    { label: 'Timeout', detail: 'don\'t wait forever', tone: 'primary' },
+    { label: 'Retry with backoff + jitter', detail: 'a few attempts, not a thundering herd', tone: 'success' },
+    { label: 'Circuit breaker', detail: 'stop hammering a sick dependency', tone: 'warn' },
+    { label: 'Graceful degradation', detail: 'serve something useful with what works', tone: 'muted' },
+  ]}
+/>
+
+## Always set a timeout
+
+The default in many libraries is "wait forever." A user request that hangs for 30s is
+worse than one that fails in 1s — it ties up threads, connection pool slots, and
+patience.
+
+<CodeTabs>
+  <CodeTab lang="ts">
+    ```ts
+    const res = await fetch(url, {
+      signal: AbortSignal.timeout(2000),     // 2 second deadline
+    });
+    ```
+  </CodeTab>
+  <CodeTab lang="python">
+    ```python
+    async with httpx.AsyncClient(timeout=2.0) as client:    # 2 second deadline
+        res = await client.get(url)
+    ```
+  </CodeTab>
+</CodeTabs>
+
+The right timeout depends on the work, but a useful rule: **the request budget should be
+fixed**. If your API has 1s to respond, all internal calls combined must be under 1s.
+Don't let a slow dependency steal more than its share.
+
+## Retry — carefully
+
+Retries fix *transient* failures, not bugs. Three rules:
+
+<Steps>
+  <Step title="Only retry idempotent operations">
+    Retrying a `POST /charge` may charge twice. Use idempotency keys, or only retry
+    `GET`/`PUT`/`DELETE`.
+  </Step>
+  <Step title="Exponential backoff">
+    Wait 100ms, then 200ms, then 400ms… don't retry in a tight loop.
+  </Step>
+  <Step title="Add jitter">
+    Without jitter, every client of a failed service retries at the same moment and
+    re-overloads it on recovery (the "thundering herd").
+  </Step>
+</Steps>
+
+<CodeTabs>
+  <CodeTab lang="ts">
+    ```ts
+    async function callWithRetry<T>(
+      fn: () => Promise<T>,
+      { maxAttempts = 3, baseMs = 100 } = {},
+    ): Promise<T> {
+      for (let attempt = 1; ; attempt++) {
+        try { return await fn(); } catch (err) {
+          if (attempt >= maxAttempts || !isRetryable(err)) throw err;
+          const backoff = baseMs * 2 ** (attempt - 1);
+          const jitter  = Math.random() * baseMs;
+          await sleep(backoff + jitter);
+        }
+      }
+    }
+    ```
+  </CodeTab>
+  <CodeTab lang="python">
+    ```python
+    import asyncio, random
+    from typing import Awaitable, Callable, TypeVar
+    T = TypeVar("T")
+
+    async def call_with_retry(
+        fn: Callable[[], Awaitable[T]],
+        max_attempts: int = 3,
+        base_ms: int = 100,
+    ) -> T:
+        for attempt in range(1, max_attempts + 1):
+            try:
+                return await fn()
+            except Exception as err:
+                if attempt >= max_attempts or not is_retryable(err):
+                    raise
+                backoff = base_ms * (2 ** (attempt - 1))
+                jitter = random.random() * base_ms
+                await asyncio.sleep((backoff + jitter) / 1000)
+    ```
+  </CodeTab>
+</CodeTabs>
+
+## Circuit breaker
+
+A sick dependency that times out on every request is *worse* than one that fails fast —
+each timeout ties up resources. The circuit breaker watches failure rates and trips when
+they spike, failing every subsequent call **instantly** for a cooldown period.
+
+<Timeline
+  events={[
+    { at: 't=0', label: 'Closed', detail: 'normal — calls pass through, failures counted' },
+    { at: 't=1', label: 'Threshold hit', detail: '50% errors in last 60s; circuit opens', tone: 'warn' },
+    { at: 't=1+30s', label: 'Open', detail: 'all calls fail-fast without touching the dependency' },
+    { at: 't=1+30s+', label: 'Half-open', detail: 'let one call through; if it succeeds, close again', tone: 'success' },
+  ]}
+/>
+
+Use a library (Polly, Resilience4j, opossum); rolling your own is full of edge cases.
+
+## Bulkheads — isolate the blast radius
+
+If one dependency goes slow and consumes the whole thread pool, every endpoint becomes
+slow. Give each dependency its **own** small pool. When it dies, only its callers are
+affected; the rest of the app keeps serving.
+
+## Graceful degradation
+
+When something inevitable breaks, what does your system do?
+
+<DefinitionList>
+  <Definition term="Stale-while-revalidate">Serve the last cached value while you retry in the background.</Definition>
+  <Definition term="Skip the optional bit">Search index down? Hide the search box. The product page still loads.</Definition>
+  <Definition term="Read-only mode">Database primary down? Allow reads from replicas; show "writes are temporarily unavailable."</Definition>
+  <Definition term="Static fallback">A pre-rendered error page is infinitely better than a stack trace.</Definition>
+</DefinitionList>
+
+## Idempotency keys
+
+For mutations across services, send a client-generated idempotency key. Servers
+deduplicate by it. Retries become safe.
+
+```http
+POST /charges HTTP/1.1
+Idempotency-Key: a1b2c3d4
+Content-Type: application/json
+
+{"amount_cents": 1000, "customer_id": 42}
+```
+
+If the server crashes after charging but before responding, the client retries with the
+same key — the server recognises it, doesn't charge again, returns the previous response.
+
+## In practice
+
+Most outages are not "a server died" but "a downstream got slow, threads piled up, the
+whole thing fell over." Defending against latency is harder than defending against
+crashes. Test it: in staging, inject 5-second delays into a dependency and see what
+breaks.
+
+<KeyTakeaways
+  items={[
+    'Set timeouts on every network call; never wait forever.',
+    'Retry idempotent operations with exponential backoff + jitter; not in a tight loop.',
+    'Use a circuit breaker so a sick dependency fails fast instead of hanging.',
+    'Bulkheads isolate failures — separate thread pools / connection pools per dependency.',
+    "Plan graceful degradation: stale data, partial features, read-only mode beat a blank page.",
+    'Idempotency keys make retries safe across services.',
+  ]}
+/>

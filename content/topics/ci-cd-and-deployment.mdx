@@ -1,0 +1,159 @@
+<Lead>
+Continuous integration keeps `main` green. Continuous delivery makes deploys boring. The
+three deploy shapes — rolling, blue-green, canary — each trade speed against safety.
+Pick by the risk profile of what you're shipping.
+</Lead>
+
+## The big idea
+
+A change should go from "code committed" to "running in production" with no manual
+steps you couldn't automate. The pipeline is your safety net; treat it like product code.
+
+<BoxFlow
+  nodes={[
+    { label: 'Commit', tone: 'muted' },
+    { label: 'CI', detail: 'test + lint + build', tone: 'primary' },
+    { label: 'Artifact', detail: 'image / binary', tone: 'success' },
+    { label: 'Deploy', detail: 'rolling / blue-green / canary', tone: 'warn' },
+    { label: 'Observe + rollback', tone: 'success' },
+  ]}
+/>
+
+## Continuous integration
+
+Every push runs the same set of checks. The goal isn't "tests pass" — it's "main is
+always in a deployable state."
+
+```yaml
+# .github/workflows/ci.yml — illustrative
+name: ci
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: npm }
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test -- --coverage
+      - run: npm run build
+```
+
+A useful checklist:
+
+<DefinitionList>
+  <Definition term="Fast">Under 10 minutes ideally. Slow CI = developers skip it.</Definition>
+  <Definition term="Deterministic">Same input → same output. Flaky tests get quarantined or fixed, not retried.</Definition>
+  <Definition term="Hermetic">No "works on my laptop" — pin tool versions, freeze deps with a lockfile.</Definition>
+  <Definition term="Required to merge">A green check on the PR; nothing reaches main without it.</Definition>
+</DefinitionList>
+
+## Three deploy shapes
+
+<Comparison
+  leftTitle="Strategy"
+  rightTitle="Trade-off"
+  rows={[
+    {
+      attribute: 'Rolling',
+      left: 'Replace instances N at a time over minutes.',
+      right: 'Cheap and simple; mixed-version state during the deploy; slow to roll back.',
+    },
+    {
+      attribute: 'Blue-green',
+      left: 'Stand up a full new fleet, switch traffic atomically, keep the old as hot standby.',
+      right: 'Instant rollback; double compute cost during deploy; tricky for stateful services.',
+    },
+    {
+      attribute: 'Canary',
+      left: 'Route 1% → 5% → 25% → 100% to the new version, watching metrics at each step.',
+      right: 'Catches problems on a fraction of users; complex to set up; best for high-risk releases.',
+    },
+  ]}
+/>
+
+## Canary in practice
+
+The hard part is the **automated decision**: when do you promote the next step?
+
+<Steps>
+  <Step title="Define success criteria">
+    Latency p99 not worse than baseline by X%; error rate not above baseline by Y%.
+  </Step>
+  <Step title="Run for a bake period">
+    Long enough to catch hourly patterns, short enough that the deploy isn't all day.
+    10–30 minutes per stage is common.
+  </Step>
+  <Step title="Promote or roll back automatically">
+    Don't make the on-call human-judge each step at 3am.
+  </Step>
+  <Step title="Always be able to abort">
+    A one-click "send 100% back to old version" is mandatory.
+  </Step>
+</Steps>
+
+<Callout tone="warn" title="Database changes vs canary">
+A canary doesn't help if the new code requires a schema change. **Migrate in two
+deploys**: deploy 1 adds the new column / table while old code still works; deploy 2
+flips the code over. See [Database migrations](/topic/database-migrations).
+</Callout>
+
+## Feature flags
+
+The other deploy lever: ship the *code* dark, enable the *feature* later with a flag.
+
+<CodeTabs>
+  <CodeTab lang="ts">
+    ```ts
+    if (flags.isEnabled('checkout_v2', { userId })) {
+      return runNewCheckout(...);
+    }
+    return runOldCheckout(...);
+    ```
+  </CodeTab>
+  <CodeTab lang="python">
+    ```python
+    if flags.is_enabled("checkout_v2", user_id=user_id):
+        return run_new_checkout(...)
+    return run_old_checkout(...)
+    ```
+  </CodeTab>
+</CodeTabs>
+
+You can:
+- Roll out by % of users.
+- Roll out by region or cohort.
+- Kill a buggy feature in seconds without a deploy.
+
+Cost: technical debt — old branches must be removed once the flag is fully on. Track
+flag age; delete ruthlessly.
+
+## Rollback discipline
+
+Three rules:
+
+1. **Always be deployable.** Roll forward usually beats roll back, but you must be able to
+   do either fast.
+2. **Roll back what you can revert.** Reverting an app version is easy; reverting a
+   migration is hard. Migrate in expand-contract steps.
+3. **Practise rollbacks.** Schedule game days where you roll back a fake change. The first
+   time you do it in anger is not when you want to learn.
+
+## In practice
+
+The pipeline is product code. Review changes to it, version it, write tests for it. The
+team that invests an extra week in a fast, reliable CI/CD pipeline saves it back in the
+first week.
+
+<KeyTakeaways
+  items={[
+    'CI keeps main always deployable; CD turns deploys into a non-event.',
+    'Pipelines must be fast, deterministic, hermetic, and required to merge.',
+    'Rolling is cheap; blue-green gives instant rollback; canary catches issues before everyone sees them.',
+    "Migrate schemas in two deploys; never combine a column rename with a code change.",
+    "Feature flags decouple deploy from release — but track their age and delete ruthlessly.",
+  ]}
+/>

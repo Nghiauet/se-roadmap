@@ -1,0 +1,163 @@
+<Lead>
+Docker gives you reproducible runtime environments. Kubernetes adds a scheduler, service
+discovery, and self-healing on top. Learn Docker thoroughly before reaching for
+Kubernetes — most teams never need K8s, and the ones that do should know what they're
+paying for.
+</Lead>
+
+## The big idea
+
+A container packages **your app and everything it needs to run** into one image. That
+image runs identically on your laptop, in CI, and in production. Kubernetes orchestrates
+many containers across many machines.
+
+<BoxFlow
+  direction="vertical"
+  nodes={[
+    { label: 'Dockerfile', detail: 'recipe', tone: 'muted' },
+    { label: 'Image', detail: 'immutable artifact', tone: 'primary' },
+    { label: 'Container', detail: 'a running process from an image', tone: 'success' },
+    { label: 'Pod (K8s)', detail: 'one or more containers, one IP', tone: 'success' },
+    { label: 'Deployment / Service / Ingress', detail: 'replication + discovery + routing', tone: 'warn' },
+  ]}
+/>
+
+## Docker fundamentals
+
+The mental model: a Linux process with its own filesystem, network namespace, and PID
+space — sharing the host kernel. Not a VM. Cheaper, faster, less isolated.
+
+```dockerfile
+# Multi-stage build keeps the final image small
+FROM node:20-alpine AS deps
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+RUN npm run build
+
+FROM node:20-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static    ./.next/static
+COPY --from=builder /app/public          ./public
+EXPOSE 3000
+CMD ["node", "server.js"]
+```
+
+### Image hygiene
+
+<DefinitionList>
+  <Definition term="Pin versions">`node:20-alpine` is better than `node:latest`; `node:20.18.1-alpine` is better still.</Definition>
+  <Definition term="Multi-stage builds">Compile in one stage, copy only the artifacts to the final stage. Drops image size 10×.</Definition>
+  <Definition term="Run as non-root">Add a user; don't run your app as `root` even inside a container.</Definition>
+  <Definition term="`.dockerignore`">Don't COPY your `.git`, `node_modules`, or `.env.local`.</Definition>
+  <Definition term="One process per container">Trying to run nginx + your app in one container fights the model.</Definition>
+</DefinitionList>
+
+## When to add Kubernetes
+
+If you can answer "yes" to several of these, K8s starts paying for itself:
+
+<Steps>
+  <Step title="You have 10+ services">
+    With deployment, scaling, and routing needs you don't want to script per-service.
+  </Step>
+  <Step title="You need self-healing">
+    Crashes restart automatically; failed nodes evacuated.
+  </Step>
+  <Step title="You auto-scale based on load">
+    Horizontal Pod Autoscaler keys off metrics.
+  </Step>
+  <Step title="You run on multiple machines">
+    Without it, you're either over-provisioned or hand-placing containers.
+  </Step>
+</Steps>
+
+If you're running 1–3 services, **a single Compose file on one VM is enough**. Don't
+adopt K8s for the resume.
+
+## Kubernetes object zoo
+
+The handful of objects you'll touch:
+
+<DefinitionList>
+  <Definition term="Pod">Smallest deployable unit — one or more containers sharing an IP. Usually you don't create pods directly.</Definition>
+  <Definition term="Deployment">Declarative recipe: "run N replicas of this pod template; if I update it, roll out gradually."</Definition>
+  <Definition term="Service">Stable virtual IP that load-balances over the pods of a deployment. The discovery primitive.</Definition>
+  <Definition term="Ingress">HTTP-level routing into the cluster — maps `example.com/api` to a Service. Often backed by NGINX or Envoy.</Definition>
+  <Definition term="ConfigMap / Secret">Config + secrets injected as files or env vars.</Definition>
+  <Definition term="HPA">Horizontal Pod Autoscaler — scale a deployment by CPU/memory/custom metrics.</Definition>
+  <Definition term="StatefulSet">Pods with stable identities + persistent volumes. For databases, queues, leader-elected services.</Definition>
+</DefinitionList>
+
+## A minimal Deployment + Service
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+spec:
+  replicas: 3
+  selector: { matchLabels: { app: api } }
+  template:
+    metadata: { labels: { app: api } }
+    spec:
+      containers:
+        - name: api
+          image: ghcr.io/example/api:1.2.3
+          ports: [{ containerPort: 3000 }]
+          readinessProbe: { httpGet: { path: /ready, port: 3000 } }
+          livenessProbe:  { httpGet: { path: /healthz, port: 3000 } }
+          resources:
+            requests: { cpu: "100m", memory: "128Mi" }
+            limits:   { cpu: "500m", memory: "512Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: api }
+spec:
+  selector: { app: api }
+  ports: [{ port: 80, targetPort: 3000 }]
+```
+
+## The non-obvious cost
+
+K8s gives you many knobs. Each one is a chance to misconfigure something:
+
+<Callout tone="warn" title="Resource requests > what you use = wasted nodes">
+Requests reserve capacity even when the pod is idle. Set them from observed usage,
+not from "feels safe."
+</Callout>
+
+<Callout tone="warn" title="Liveness probes that are too aggressive">
+A flaky probe kills healthy pods. Use *readiness* aggressively, *liveness* sparingly.
+</Callout>
+
+<Callout tone="warn" title="The control plane is a database">
+etcd, the API server, the scheduler — they have their own scaling and backup story. On
+managed K8s (GKE/EKS/AKS) you're paying someone else to run that database. Worth it.
+</Callout>
+
+## In practice
+
+For a small team: **Docker + Compose + a single beefy VM** carries you a long way. For a
+team with several services and growing: **managed Kubernetes (EKS, GKE, AKS) + a managed
+ingress and DB** is the sweet spot. **Self-hosted K8s on bare metal** is a job
+description, not a side project.
+
+<KeyTakeaways
+  items={[
+    'A container is a process; an image is its package; pods are K8s\'s unit of one.',
+    'Multi-stage Dockerfiles + pinned versions + non-root user are the basics of image hygiene.',
+    "Reach for Kubernetes when you have many services, real auto-scaling needs, and multiple machines.",
+    "Most apps survive happily on Compose + one VM. Don't K8s your resume.",
+    "Set resource requests/limits from observed usage; readiness > liveness for probes.",
+  ]}
+/>

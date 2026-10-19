@@ -1,0 +1,107 @@
+<Lead>
+Debugging is disciplined evidence gathering. The goal is not to guess faster; it is to
+make the bug small, observable, and impossible to misunderstand.
+</Lead>
+
+## The big idea
+
+A reliable debugging loop is boring on purpose:
+
+<BoxFlow
+  nodes={[
+    { label: 'Reproduce', detail: 'one command', tone: 'primary' },
+    { label: 'Localize', detail: 'which layer', tone: 'default' },
+    { label: 'Observe', detail: 'logs/data', tone: 'success' },
+    { label: 'Hypothesize', detail: 'falsifiable', tone: 'warn' },
+    { label: 'Fix', detail: 'small patch', tone: 'primary' },
+    { label: 'Verify', detail: 'same repro', tone: 'success' },
+  ]}
+/>
+
+When the loop is clear, even hard bugs feel tractable.
+
+## Start with reproduction
+
+Write the smallest command, request, or test that fails every time.
+
+```bash
+curl -i http://localhost:8000/api/orders/42
+pytest tests/test_orders.py::test_missing_order_returns_404 -q
+npm test -- --runInBand order-detail
+```
+
+If the bug only happens sometimes, your first task is to collect the conditions: input,
+user, time, version, environment, concurrency, and external dependencies.
+
+## Trace the request flow
+
+Do not debug "the app" as one blob. Walk the path:
+
+<LayerStack
+  layers={[
+    { label: 'Client', detail: 'browser, curl, mobile app' },
+    { label: 'Edge / proxy', detail: 'nginx, CDN, gateway' },
+    { label: 'Route', detail: 'method, path, auth, validation' },
+    { label: 'Service', detail: 'business rule and branching' },
+    { label: 'Database / queue', detail: 'query, transaction, job state' },
+    { label: 'External service', detail: 'timeout, retry, contract drift' },
+  ]}
+/>
+
+At each layer, ask: what did it receive, what did it decide, and what did it send next?
+
+## Make hypotheses falsifiable
+
+Weak hypothesis: "Auth is broken."
+
+Strong hypothesis: "The route rejects this request because the `Authorization` header is
+missing after the nginx proxy forwards it."
+
+The strong version tells you what to inspect:
+
+```bash
+curl -v http://localhost:8000/api/me -H "Authorization: Bearer test"
+docker compose logs api | rg "request_id|Authorization|401"
+```
+
+## Read evidence, not vibes
+
+<DefinitionList>
+  <Definition term="Logs">Best for exact events: request IDs, user IDs, branches taken, errors.</Definition>
+  <Definition term="Metrics">Best for shape: latency, error rate, queue depth, saturation.</Definition>
+  <Definition term="Traces">Best for multi-service latency and where time disappeared.</Definition>
+  <Definition term="Database state">Best for whether the system stored what you think it stored.</Definition>
+</DefinitionList>
+
+Add temporary instrumentation only when needed, and remove noisy debug prints before the
+fix lands.
+
+## Verify the fix
+
+A fix is not done when the error disappears once. It is done when:
+
+- The original failing reproduction now passes.
+- At least one adjacent failure case is checked.
+- The right layer owns the fix.
+- The behavior is covered by a test or a saved smoke command.
+
+<Callout tone="tip" title="Keep a bug journal">
+For non-trivial bugs, write the symptom, failed hypotheses, real cause, fix, and
+prevention. This turns painful debugging into team knowledge.
+</Callout>
+
+## In practice
+
+Take a past production bug and rewrite it as a debugging trace: request, layer, evidence,
+root cause, patch, verification. If the trace has gaps, that is exactly where your future
+logs or tests should improve.
+
+<KeyTakeaways
+  items={[
+    "First make the bug reproducible; then make it small.",
+    "Trace the full flow instead of guessing which layer is broken.",
+    "A useful hypothesis predicts what evidence would prove it wrong.",
+    "Use logs, metrics, traces, and database state for different questions.",
+    "Verification means rerunning the original repro and checking nearby failure cases.",
+  ]}
+/>

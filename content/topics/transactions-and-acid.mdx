@@ -1,0 +1,126 @@
+<Lead>
+ACID is one acronym hiding a lot of complexity. The promise is "your write either happens
+completely or not at all, even if something crashes mid-flight." The reality is that
+isolation levels leak, deadlocks happen, and locking impacts throughput.
+</Lead>
+
+## The big idea
+
+A transaction is a **bundle of statements that succeed or fail as a unit**. The four
+guarantees:
+
+<DefinitionList>
+  <Definition term="Atomicity">All statements in the transaction commit, or none of them do. No half-states.</Definition>
+  <Definition term="Consistency">The DB starts and ends in a state that satisfies all constraints (FKs, NOT NULL, CHECK).</Definition>
+  <Definition term="Isolation">Concurrent transactions don't see each other's in-flight changes — at least, not according to the isolation level.</Definition>
+  <Definition term="Durability">Once committed, a transaction survives a crash or power loss.</Definition>
+</DefinitionList>
+
+A and D you mostly get for free. C is constraints. **I is where the bodies are buried.**
+
+## The bank transfer canon
+
+```sql
+BEGIN;
+  UPDATE accounts SET balance = balance - 100 WHERE id = 1;
+  UPDATE accounts SET balance = balance + 100 WHERE id = 2;
+COMMIT;
+```
+
+If the server dies between the two updates, atomicity guarantees neither happens. If a
+concurrent reader checks the total balance during the transfer, isolation decides whether
+they see the inconsistent middle state.
+
+## Isolation levels — the leak ladder
+
+Stronger isolation prevents more anomalies, but costs concurrency. SQL defines four
+levels; what each database actually does varies.
+
+<Comparison
+  leftTitle="Level"
+  rightTitle="Allows"
+  rows={[
+    { attribute: 'Read uncommitted', left: 'Lowest', right: 'Reads of uncommitted writes (dirty reads). Rarely useful.' },
+    { attribute: 'Read committed', left: 'Postgres / Oracle default', right: 'No dirty reads. Still allows non-repeatable reads and phantoms.' },
+    { attribute: 'Repeatable read', left: 'MySQL InnoDB default', right: 'A row read twice in one tx returns the same value. Postgres adds snapshot isolation here.' },
+    { attribute: 'Serializable', left: 'Strongest', right: 'As if transactions ran one at a time. Slower; some writes will be rejected and need retry.' },
+  ]}
+/>
+
+<Callout tone="warn" title="The hidden anomaly: write skew">
+Even at "repeatable read," two transactions can each read the same row, both check the
+same constraint, and both commit — producing a final state neither expected. Example:
+two doctors going off-call when "at least one must remain." Only **serializable**
+prevents write skew.
+</Callout>
+
+## Optimistic vs pessimistic concurrency
+
+Two ways to deal with concurrent writes to the same row:
+
+<Compare>
+  <Do>
+    **Pessimistic** — lock the row at read time so nobody else can write until I commit.
+    ```sql
+    BEGIN;
+      SELECT * FROM accounts WHERE id = 1 FOR UPDATE;   -- row locked
+      UPDATE accounts SET balance = balance - 100 WHERE id = 1;
+    COMMIT;
+    ```
+    Right for short-lived transactions on hot rows.
+  </Do>
+  <Do title="Or: Optimistic">
+    Check a version column on update; retry if it changed.
+    ```sql
+    UPDATE accounts SET balance = balance - 100, version = version + 1
+     WHERE id = 1 AND version = 7;
+    -- If rows affected = 0, somebody else got there first → retry
+    ```
+    Right when conflicts are rare and you want minimum locking.
+  </Do>
+</Compare>
+
+## Deadlocks
+
+Two transactions hold one lock each and each wants the other's. Every relational
+database detects this and aborts one with a deadlock error.
+
+```text
+T1: UPDATE accounts WHERE id = 1;        -- holds lock on 1
+T2: UPDATE accounts WHERE id = 2;        -- holds lock on 2
+T1: UPDATE accounts WHERE id = 2;        -- waits for T2
+T2: UPDATE accounts WHERE id = 1;        -- waits for T1   → deadlock
+```
+
+**The fix is discipline, not luck:** always lock rows in the same order
+(`min(id), max(id)` for transfers). Your app should also retry on serialization
+failures — both deadlocks and serializable retries are normal.
+
+## Long transactions are tech debt
+
+A transaction that hangs around for minutes:
+
+- Holds locks the whole time → starves other writers.
+- Holds an MVCC snapshot → bloats the database (Postgres dead-tuple buildup).
+- Likely to deadlock or be killed.
+
+Keep transactions **short and focused**. Network calls inside a transaction is a red
+flag — what happens if the third-party call hangs for 30 seconds?
+
+## In practice
+
+Stick to read-committed (the default) for most queries. Reach for serializable when you
+have a real invariant to protect and accept that your code must retry on conflict.
+**Always** lock in a consistent order, **always** keep transactions short, **always**
+write a retry path for serialization failures.
+
+<KeyTakeaways
+  items={[
+    'ACID: all-or-nothing writes, constraint-respecting, isolated, durable.',
+    'Isolation is the only one with real trade-offs — read the level your DB actually uses.',
+    'Write skew is a real anomaly even at "repeatable read"; only serializable prevents it.',
+    'Pessimistic locks for hot rows; optimistic version checks when conflicts are rare.',
+    'Keep transactions short; never call external services inside one.',
+    "Lock rows in a consistent order to avoid deadlocks; retry on serialization errors.",
+  ]}
+/>

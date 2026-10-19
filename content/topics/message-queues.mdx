@@ -1,0 +1,130 @@
+<Lead>
+A queue decouples the thing that *makes work* from the thing that *does the work*. It
+smooths spikes, enables retries, and lets you scale producers and consumers
+independently. The trade-off is a whole new class of failure modes.
+</Lead>
+
+## The big idea
+
+Replace the synchronous call with a queue:
+
+<Compare>
+  <Do>
+    ```text
+    API → queue → worker pool
+                  → DB
+                  → email
+                  → analytics
+    ```
+    Request returns in 50ms. Slow work happens later.
+  </Do>
+  <Dont>
+    ```text
+    API → DB → email → analytics → response
+    ```
+    Request blocks for 8s; the email server timing out fails the whole order.
+  </Dont>
+</Compare>
+
+## Two shapes: log vs broker
+
+The two dominant designs differ in what "a message" is.
+
+<Comparison
+  leftTitle="Log (Kafka, Pulsar, Kinesis)"
+  rightTitle="Broker (RabbitMQ, SQS)"
+  rows={[
+    { attribute: 'Storage', left: 'Append-only log, retained for days', right: 'Queue; message gone after consumed' },
+    { attribute: 'Replay', left: 'Yes — read from any offset', right: 'No (or limited)' },
+    { attribute: 'Multiple consumers', left: 'Each consumer group reads independently', right: 'Each message goes to one consumer' },
+    { attribute: 'Ordering', left: 'Per-partition strict', right: 'Per-queue best-effort' },
+    { attribute: 'Best for', left: 'Event sourcing, analytics, replay', right: 'Task queues, work distribution' },
+  ]}
+/>
+
+## Delivery semantics
+
+The defining question: what does "the message was delivered" actually mean?
+
+<DefinitionList>
+  <Definition term="At-most-once">May be lost; never duplicated. "Fire and forget."</Definition>
+  <Definition term="At-least-once">Never lost; may be duplicated. The pragmatic default — your handlers must be idempotent.</Definition>
+  <Definition term="Exactly-once">Never lost, never duplicated. Available in some systems (Kafka transactions), with caveats. Hard to do truly E2E.</Definition>
+</DefinitionList>
+
+<Callout tone="tip" title="Idempotency is the real answer">
+Don't chase exactly-once across the wire. Use **at-least-once delivery + idempotent
+handlers**. Tag each message with a unique ID; refuse to process a message ID you've seen
+before. That's a much simpler robustness model.
+</Callout>
+
+## What goes in a message
+
+A message is a *promise of work to do*. Keep it small and self-contained.
+
+```json
+{
+  "id": "msg_8e4f2c…",                  // unique → idempotency key
+  "type": "order.placed",
+  "version": 1,
+  "occurred_at": "2025-11-12T08:00:00Z",
+  "data": {
+    "order_id": 9001,
+    "user_id": 42
+  }
+}
+```
+
+Don't put **giant payloads** in messages (PDFs, video). Store them in object storage and
+pass a reference. Don't put **state that may have changed** — send IDs, let the handler
+re-read fresh state.
+
+## Failure handling
+
+Every queue system has at minimum these three concepts:
+
+<Steps>
+  <Step title="Visibility timeout / lease">
+    When a worker picks up a message, the queue hides it for N seconds. If the worker
+    crashes before acking, the message reappears for another worker.
+  </Step>
+  <Step title="Retries with backoff">
+    Failed messages go back to the queue, ideally with exponential backoff and jitter.
+    Configure a max retry count.
+  </Step>
+  <Step title="Dead-letter queue (DLQ)">
+    After max retries, the message moves to a DLQ for human inspection. Set up alerts —
+    a growing DLQ is a P1 incident.
+  </Step>
+</Steps>
+
+<Callout tone="warn" title="Poison messages">
+A bug in the handler can cause one message to fail forever, blocking the queue. The DLQ
+isolates it. **Always** have a DLQ; **always** alert on its depth.
+</Callout>
+
+## Ordering
+
+In Kafka, ordering is **per partition**. You partition by a key (`order_id`, `user_id`),
+and all messages for the same key arrive in order to the same consumer. Across keys,
+there is no global order. Design around this — if your handler depends on "things
+happened in this order," your partition key must contain everything that defines that
+order.
+
+## In practice
+
+The first time you reach for a queue, you'll be tempted to model business logic as 12
+small queues + 12 small workers. Resist. Start with one queue, one worker pool, simple
+message shapes. Split when you have a real reason: independent scaling needs, different
+SLAs, or genuinely different domains.
+
+<KeyTakeaways
+  items={[
+    "Queues decouple producers from consumers — smooth spikes, enable retries, scale independently.",
+    "Logs (Kafka) for replay/analytics; brokers (Rabbit, SQS) for work distribution.",
+    "Pick at-least-once + idempotent handlers over chasing exactly-once.",
+    "Keep messages small; pass references to large payloads.",
+    "Visibility timeout, retries with backoff, and a DLQ are non-negotiable.",
+    "Kafka ordering is per partition — your partition key defines the unit of order.",
+  ]}
+/>

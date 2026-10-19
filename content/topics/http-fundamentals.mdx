@@ -1,0 +1,124 @@
+<Lead>
+HTTP is the ASCII contract every web service speaks. Once you can read a raw request and
+response, every framework, gateway, and proxy stops feeling magical — they are all just
+shaping these same six fields.
+</Lead>
+
+## The big idea
+
+HTTP is a **request–response protocol over TCP**. The client sends one text-shaped message,
+the server sends one back, and the conversation is over. Everything else — REST, GraphQL,
+APIs, browsers — sits on top of this one exchange. Master the anatomy of that exchange
+(method, path, headers, body, status), and you can debug almost anything on the wire with
+nothing but `curl` and your eyes.
+
+<RequestResponse
+  client="Browser / curl"
+  server="Web server"
+  request={[
+    { label: 'GET /users/42 HTTP/1.1', detail: 'request line' },
+    { label: 'Host: api.example.com', detail: 'headers' },
+  ]}
+  response={[
+    { label: '200 OK', detail: 'status line' },
+    { label: 'Content-Type: application/json', detail: 'headers + body' },
+  ]}
+/>
+
+## Anatomy of a request and response
+
+Both messages share the same skeleton: a **start line**, zero or more **headers**, an empty
+line, and an optional **body**. The only difference is the start line — clients send a
+method + path + version, servers send a version + status code + reason phrase.
+
+```http
+POST /orders HTTP/1.1
+Host: api.example.com
+Content-Type: application/json
+Authorization: Bearer eyJhbGciOi…
+Content-Length: 38
+
+{"sku": "SKU-42", "quantity": 2}
+```
+
+```http
+HTTP/1.1 201 Created
+Content-Type: application/json
+Location: /orders/9001
+Content-Length: 27
+
+{"id": 9001, "status": "new"}
+```
+
+<Callout tone="tip" title="Read it out loud">
+If you can read the two blocks above and explain *why* there are blank lines, why the body
+size is announced upfront, and what `Location` is for — you already know more about HTTP
+than most developers shipping production APIs.
+</Callout>
+
+## Methods: safe, idempotent, neither
+
+Methods describe **intent**, not implementation. The two properties that matter for design:
+
+<DefinitionList>
+  <Definition term="Safe">Doesn't change server state. `GET`, `HEAD`, `OPTIONS`.</Definition>
+  <Definition term="Idempotent">Calling it N times has the same effect as calling it once. All safe methods, plus `PUT` and `DELETE`.</Definition>
+  <Definition term="Neither">`POST` and `PATCH` — assume the worst, design for retries.</Definition>
+</DefinitionList>
+
+The practical rule: **never make a `GET` mutate data**. Browsers, caches, and crawlers all
+retry safe methods freely. A `GET /cart/checkout` is how you get charged twice.
+
+## Status codes: five families
+
+Memorise the families, not the codes. The first digit tells you the story.
+
+<StatusGrid
+  items={[
+    { code: '1xx', label: 'Informational', detail: 'Hold on, still working (rare in apps).', tone: 'muted' },
+    { code: '2xx', label: 'Success', detail: '200 OK, 201 Created, 204 No Content.', tone: 'success' },
+    { code: '3xx', label: 'Redirect', detail: '301 permanent, 302 temporary, 304 not modified.', tone: 'info' },
+    { code: '4xx', label: 'You messed up', detail: '400 bad request, 401 auth, 403 forbidden, 404 not found.', tone: 'warn' },
+    { code: '5xx', label: 'We messed up', detail: '500 server error, 502/503/504 upstream issues.', tone: 'error' },
+  ]}
+/>
+
+<Callout tone="warn" title="401 vs 403">
+**401 Unauthorized** = "I don't know who you are." Authenticate.
+**403 Forbidden** = "I know who you are, you can't do this." No amount of re-auth helps.
+Mixing them up is the most common API design mistake.
+</Callout>
+
+## Headers: the metadata layer
+
+Headers carry everything that is *about* the message but not part of the payload:
+identity (`Authorization`, `Cookie`), content negotiation (`Accept`, `Content-Type`),
+caching (`Cache-Control`, `ETag`), and tracing (`X-Request-Id`). Custom headers used to be
+`X-`-prefixed; that convention is dead — just use a descriptive name.
+
+```bash
+curl -i https://api.example.com/users/42 \
+  -H 'Accept: application/json' \
+  -H 'Authorization: Bearer ey…' \
+  -H 'X-Request-Id: a1b2c3'
+```
+
+## In practice
+
+Most HTTP bugs reduce to one of four things:
+- Wrong method (using `POST` where `PUT` would let retries succeed).
+- Wrong status code (returning `200` with `{"error": …}` so clients can't tell success from failure).
+- Missing or wrong `Content-Type` (your JSON body is being parsed as form-encoded).
+- Cache headers you didn't think about (mutating data behind a CDN that's caching it).
+
+Reach for `curl -i -v` before you reach for the debugger.
+
+<KeyTakeaways
+  items={[
+    'HTTP is a plain-text request/response protocol; learn to read the raw bytes.',
+    "Methods communicate intent — keep `GET` safe; design `POST`/`PATCH` for retries.",
+    'Status codes come in five families; pick the right family before the right number.',
+    'Headers carry metadata: auth, content type, caching, tracing.',
+    'When a request misbehaves, `curl -i -v` is faster than any GUI debugger.',
+  ]}
+/>

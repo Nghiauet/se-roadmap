@@ -1,0 +1,191 @@
+<Lead>
+Middleware is "Chain of Responsibility" wearing a web framework's clothes: a request
+walks through a stack of small functions, each one free to log, authenticate, validate,
+short-circuit, or pass along. Every backend framework is built on it.
+</Lead>
+
+## The big idea
+
+A request comes in, a response goes out, and in between there is a **pipeline of small
+functions**, each able to do something before the handler and something after.
+
+<BoxFlow
+  nodes={[
+    { label: 'Request', tone: 'muted' },
+    { label: 'Logger', tone: 'primary' },
+    { label: 'Auth', tone: 'primary' },
+    { label: 'Rate limit', tone: 'warn' },
+    { label: 'Validation', tone: 'primary' },
+    { label: 'Handler', tone: 'success' },
+    { label: 'Response', tone: 'muted' },
+  ]}
+/>
+
+## The "onion" model
+
+Each middleware can run code *before* and *after* the handler. The shape is an onion —
+you go inwards through the layers, the handler sits at the centre, then you walk back out.
+
+<CodeTabs>
+  <CodeTab lang="ts">
+    ```ts
+    type Middleware = (
+      req: Request,
+      next: () => Promise<Response>,
+    ) => Promise<Response>;
+
+    const logger: Middleware = async (req, next) => {
+      const start = Date.now();
+      const res = await next();                       // walks inward
+      console.log(`${req.method} ${req.url} -> ${res.status} (${Date.now() - start}ms)`);
+      return res;                                     // …and back out
+    };
+
+    const auth: Middleware = async (req, next) => {
+      if (!req.headers.get('authorization')) {
+        return new Response('unauthorized', { status: 401 });   // short-circuit
+      }
+      return next();
+    };
+    ```
+  </CodeTab>
+  <CodeTab lang="python">
+    ```python
+    from time import monotonic
+    from typing import Awaitable, Callable
+
+    Middleware = Callable[[Request, Callable[[], Awaitable[Response]]], Awaitable[Response]]
+
+    async def logger(req: Request, next_):
+        start = monotonic()
+        res = await next_()                                       # walks inward
+        print(f"{req.method} {req.url} -> {res.status} ({int((monotonic() - start) * 1000)}ms)")
+        return res                                                # …and back out
+
+    async def auth(req: Request, next_):
+        if not req.headers.get("authorization"):
+            return Response("unauthorized", status=401)            # short-circuit
+        return await next_()
+    ```
+  </CodeTab>
+</CodeTabs>
+
+Calling `next()` walks one layer deeper. *Not* calling it short-circuits the pipeline —
+useful for auth failures and rate limits.
+
+## Composing the pipeline
+
+A tiny runner is all you need:
+
+<CodeTabs>
+  <CodeTab lang="ts">
+    ```ts
+    async function compose(
+      middlewares: Middleware[],
+      handler: (req: Request) => Promise<Response>,
+      req: Request,
+    ) {
+      let i = -1;
+      const dispatch = async (idx: number): Promise<Response> => {
+        if (idx <= i) throw new Error('next() called twice');
+        i = idx;
+        if (idx === middlewares.length) return handler(req);
+        return middlewares[idx](req, () => dispatch(idx + 1));
+      };
+      return dispatch(0);
+    }
+
+    await compose([logger, auth, rateLimit, validate], finalHandler, request);
+    ```
+  </CodeTab>
+  <CodeTab lang="python">
+    ```python
+    async def compose(
+        middlewares: list[Middleware],
+        handler: Callable[[Request], Awaitable[Response]],
+        req: Request,
+    ) -> Response:
+        last = -1
+
+        async def dispatch(idx: int) -> Response:
+            nonlocal last
+            if idx <= last:
+                raise RuntimeError("next() called twice")
+            last = idx
+            if idx == len(middlewares):
+                return await handler(req)
+            return await middlewares[idx](req, lambda: dispatch(idx + 1))
+
+        return await dispatch(0)
+
+    await compose([logger, auth, rate_limit, validate], final_handler, request)
+    ```
+  </CodeTab>
+</CodeTabs>
+
+This is essentially what Koa's source looks like.
+
+## Where each concern lives
+
+Cross-cutting concerns are exactly what middleware is for. A typical production stack:
+
+<Steps>
+  <Step title="Request ID + tracing">
+    Stamp every request with an ID; thread it into logs and downstream calls.
+  </Step>
+  <Step title="Structured logging">
+    Log incoming + outgoing pair with status, latency, user.
+  </Step>
+  <Step title="Authentication">
+    Resolve the caller. Fail fast with 401.
+  </Step>
+  <Step title="Authorization">
+    Decide whether *this* caller can do *this* action. Fail with 403.
+  </Step>
+  <Step title="Rate limiting">
+    Reject excessive traffic with 429.
+  </Step>
+  <Step title="Body parsing + validation">
+    Parse JSON, validate against schema, return 400 on failure.
+  </Step>
+  <Step title="Business handler">
+    The actual route — no boilerplate left, just domain logic.
+  </Step>
+  <Step title="Error handler (outermost)">
+    Catch everything that escaped; map to status + body.
+  </Step>
+</Steps>
+
+<Callout tone="tip" title="Order matters">
+Putting **logging outermost** captures the response status that auth/rate-limit
+middlewares set. Putting **error handling outermost** catches throws from every inner
+layer. Putting **rate limiting before auth** rejects unauthenticated abuse without
+wasting an auth check.
+</Callout>
+
+## Beyond HTTP
+
+The pattern shows up everywhere there's a request-shaped pipeline:
+
+<DefinitionList>
+  <Definition term="gRPC interceptors">Same shape, different protocol.</Definition>
+  <Definition term="Message bus consumers">Each handler decorates the next; great for tracing + retries.</Definition>
+  <Definition term="Database hooks">Pre/post-insert handlers (ORMs).</Definition>
+  <Definition term="Redux middleware">Even client-side state updates.</Definition>
+</DefinitionList>
+
+## In practice
+
+The first instinct of new code is to stuff cross-cutting concerns into the route handler
+("just log it here for now"). Resist. Build the middleware stack early. Every concern you
+extract becomes one less thing your handlers have to remember to do.
+
+<KeyTakeaways
+  items={[
+    'Middleware is Chain of Responsibility for request pipelines.',
+    'Each middleware can act before and after the handler — the onion model.',
+    'Calling `next()` continues; not calling it short-circuits.',
+    'Order matters: logging outermost, error handler outermost, rate limit before auth.',
+    'Every cross-cutting concern that ends up in a handler is a middleware that wasn\'t.',
+  ]}
+/>

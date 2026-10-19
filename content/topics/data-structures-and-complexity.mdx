@@ -1,0 +1,115 @@
+<Lead>
+Data structures are trade-off tables with code attached. You do not need contest-level
+algorithms for most backend work, but you do need to know what gets slow and why.
+</Lead>
+
+## The big idea
+
+Every structure makes some operations cheap and others expensive.
+
+<DefinitionList>
+  <Definition term="Array / list">Fast by index, cache-friendly, slow membership checks unless sorted or small.</Definition>
+  <Definition term="Map / dict">Fast lookup by key, ideal for grouping, deduping, and joins in memory.</Definition>
+  <Definition term="Set">Fast membership checks when you only care whether something exists.</Definition>
+  <Definition term="Queue">First-in, first-out work. Useful for jobs, BFS, and producer-consumer flows.</Definition>
+  <Definition term="Tree">Ordered hierarchy. Useful for indexes, parsers, and nested categories.</Definition>
+  <Definition term="Graph">Nodes and edges. Useful for dependencies, routes, social links, and workflows.</Definition>
+</DefinitionList>
+
+Choosing the right one is often the difference between a service that feels instant and a
+service that melts under real data.
+
+## Big O in plain English
+
+Big O describes how work grows as input grows.
+
+<StatusGrid
+  items={[
+    { code: 'O(1)', label: 'constant', detail: 'hash lookup, array index', tone: 'success' },
+    { code: 'O(log n)', label: 'logarithmic', detail: 'binary search, B-tree lookup', tone: 'success' },
+    { code: 'O(n)', label: 'linear', detail: 'scan one collection', tone: 'info' },
+    { code: 'O(n log n)', label: 'sorting-ish', detail: 'many general sorts', tone: 'warn' },
+    { code: 'O(n^2)', label: 'nested loop', detail: 'often painful at scale', tone: 'error' },
+  ]}
+/>
+
+Big O ignores constants, network calls, disk, and memory layout. Those matter in real
+systems, but Big O still catches the obvious traps.
+
+## Backend examples
+
+<CodeTabs>
+  <CodeTab lang="ts">
+    ```ts
+    // Slow when users grows: scan every user for each order.
+    const result = orders.map((order) => ({
+      ...order,
+      user: users.find((user) => user.id === order.userId),
+    }));
+
+    // Better: build an index once, then do cheap lookups.
+    const usersById = new Map(users.map((user) => [user.id, user]));
+    const result = orders.map((order) => ({
+      ...order,
+      user: usersById.get(order.userId),
+    }));
+    ```
+  </CodeTab>
+  <CodeTab lang="python">
+    ```python
+    # Slow when users grows: scan every user for each order.
+    result = [
+        {**order, "user": next((u for u in users if u.id == order["user_id"]), None)}
+        for order in orders
+    ]
+
+    # Better: build an index once, then do cheap lookups.
+    users_by_id = {u.id: u for u in users}
+    result = [{**order, "user": users_by_id.get(order["user_id"])} for order in orders]
+    ```
+  </CodeTab>
+</CodeTabs>
+
+That same idea appears everywhere: database indexes, caches, routing tables, dependency
+graphs, and queue workers.
+
+## Common choices
+
+<Steps>
+  <Step title="Need membership?">
+    Use a `Set`, not repeated `array.includes`.
+  </Step>
+  <Step title="Need lookup by ID?">
+    Use a `Map` or database index.
+  </Step>
+  <Step title="Need ordered results?">
+    Sort once, use a tree, or let the database do it with an index.
+  </Step>
+  <Step title="Need shortest path or dependencies?">
+    Model it as a graph and pick BFS, DFS, or topological sort.
+  </Step>
+</Steps>
+
+## Algorithms you should recognize
+
+- Binary search: find in sorted data.
+- BFS and DFS: traverse graphs and trees.
+- Topological sort: order tasks with dependencies.
+- Hashing: map keys to buckets; powers maps, sets, caches, sharding.
+- Sorting: know when data must be sorted and who pays for it.
+
+## In practice
+
+Take one endpoint that loops over data. Write down the input sizes, the nested loops, and
+the database calls. If the endpoint does one query per item, you have found an N+1 shape.
+If it scans a large list repeatedly, build an index or push the work into the database.
+
+<KeyTakeaways
+  items={[
+    "Data structures are operation trade-offs: lookup, insert, order, traversal, memory.",
+    "Big O tells you how work grows; real systems also care about constants, disk, and network.",
+    "Maps and sets eliminate many accidental nested loops.",
+    "Graphs are not rare; dependencies, routes, workflows, and social edges are all graphs.",
+    "Before optimizing, name the input size and the operation that grows with it.",
+  ]}
+/>

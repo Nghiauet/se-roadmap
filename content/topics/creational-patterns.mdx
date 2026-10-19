@@ -1,0 +1,210 @@
+<Lead>
+Creational patterns answer the question "how does this object come into existence?" The
+goal isn't to use every pattern — it's to recognise the *moment* when constructing an
+object directly is starting to hurt, and reach for the right shape.
+</Lead>
+
+## The big idea
+
+Direct construction (`new Order(…)`) is great until one of three pains shows up:
+
+<BoxFlow
+  nodes={[
+    { label: 'Need one shared instance', tone: 'muted' },
+    { label: 'Need to vary the concrete type', tone: 'primary' },
+    { label: 'Need many optional params', tone: 'warn' },
+  ]}
+/>
+
+Each pain has a pattern. Use the pattern only when the pain is real.
+
+## Singleton — exactly one instance
+
+A class that owns its single instance and hands it out forever. Reaches for a global, in
+disguise.
+
+<CodeTabs>
+  <CodeTab lang="ts">
+    ```ts
+    class Logger {
+      private static instance: Logger;
+      private constructor(private readonly minLevel: 'info' | 'warn' = 'info') {}
+
+      static get(): Logger {
+        if (!Logger.instance) Logger.instance = new Logger();
+        return Logger.instance;
+      }
+    }
+
+    Logger.get().info('boot');
+    ```
+  </CodeTab>
+  <CodeTab lang="python">
+    ```python
+    class Logger:
+        _instance: "Logger | None" = None
+
+        def __init__(self, min_level: str = "info") -> None:
+            self.min_level = min_level
+
+        @classmethod
+        def get(cls) -> "Logger":
+            if cls._instance is None:
+                cls._instance = cls()
+            return cls._instance
+
+    Logger.get().info("boot")
+    ```
+  </CodeTab>
+</CodeTabs>
+
+<Callout tone="warn" title="Use sparingly">
+Singletons couple every caller to one object that can't be mocked easily, and turn tests
+into a parade of `beforeEach` resets. Prefer **dependency injection** — pass the logger in
+— and reserve singleton for objects that *must* be unique (a connection pool, a process-wide
+config). When in doubt, don't.
+</Callout>
+
+## Factory — hide the construction
+
+When the choice of concrete class depends on input, a factory keeps callers from caring.
+
+<Compare>
+  <Do>
+    <CodeTabs>
+      <CodeTab lang="ts">
+        ```ts
+        function createPayment(method: 'card' | 'bank' | 'crypto'): Payment {
+          switch (method) {
+            case 'card':   return new StripeCardPayment();
+            case 'bank':   return new AchBankPayment();
+            case 'crypto': return new BitcoinPayment();
+          }
+        }
+        ```
+      </CodeTab>
+      <CodeTab lang="python">
+        ```python
+        def create_payment(method: str) -> Payment:
+            match method:
+                case "card":   return StripeCardPayment()
+                case "bank":   return AchBankPayment()
+                case "crypto": return BitcoinPayment()
+                case _: raise ValueError(method)
+        ```
+      </CodeTab>
+    </CodeTabs>
+    Callers say *what* they want; the factory decides *how*.
+  </Do>
+  <Dont>
+    <CodeTabs>
+      <CodeTab lang="ts">
+        ```ts
+        // every caller branches on the same method
+        if (method === 'card')   p = new StripeCardPayment();
+        else if (method === 'bank') p = new AchBankPayment();
+        // …repeated everywhere
+        ```
+      </CodeTab>
+      <CodeTab lang="python">
+        ```python
+        # every caller branches on the same method
+        if method == "card":   p = StripeCardPayment()
+        elif method == "bank": p = AchBankPayment()
+        # …repeated everywhere
+        ```
+      </CodeTab>
+    </CodeTabs>
+    Add a new method and you grep for the conditional. Painful.
+  </Dont>
+</Compare>
+
+## Builder — many optional parameters
+
+Constructors with 8 boolean flags become unreadable. A builder gives each piece a name and
+lets the user opt in.
+
+<CodeTabs>
+  <CodeTab lang="ts">
+    ```ts
+    const request = new HttpRequest.Builder('https://api.example.com/orders')
+      .method('POST')
+      .header('Content-Type', 'application/json')
+      .header('Authorization', 'Bearer …')
+      .body(JSON.stringify({ sku: 'X1' }))
+      .timeoutMs(2000)
+      .retries(3)
+      .build();
+    ```
+  </CodeTab>
+  <CodeTab lang="python">
+    ```python
+    request = (
+        HttpRequest.Builder("https://api.example.com/orders")
+        .method("POST")
+        .header("Content-Type", "application/json")
+        .header("Authorization", "Bearer …")
+        .body(json.dumps({"sku": "X1"}))
+        .timeout_ms(2000)
+        .retries(3)
+        .build()
+    )
+    ```
+  </CodeTab>
+</CodeTabs>
+
+A keyword-arguments "options bag" achieves the same readability without a
+separate builder class:
+
+<CodeTabs>
+  <CodeTab lang="ts">
+    ```ts
+    const request = httpRequest({
+      url: 'https://api.example.com/orders',
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: { sku: 'X1' },
+      timeoutMs: 2000,
+      retries: 3,
+    });
+    ```
+  </CodeTab>
+  <CodeTab lang="python">
+    ```python
+    request = http_request(
+        url="https://api.example.com/orders",
+        method="POST",
+        headers={"Content-Type": "application/json"},
+        body={"sku": "X1"},
+        timeout_ms=2000,
+        retries=3,
+    )
+    ```
+  </CodeTab>
+</CodeTabs>
+
+That's the same intent — pick whichever style your stack favours.
+
+## Other creational patterns you'll meet
+
+<DefinitionList>
+  <Definition term="Abstract factory">A factory that builds *families* of related objects (e.g., UI components for an OS theme). Common in GUI toolkits, rare elsewhere.</Definition>
+  <Definition term="Prototype">Cloning an existing object instead of constructing one. Useful when construction is expensive or stateful.</Definition>
+  <Definition term="DI container">Not strictly a GoF pattern, but it's where creational logic lives in modern apps (Spring, NestJS, Angular).</Definition>
+</DefinitionList>
+
+## In practice
+
+Most modern codebases barely use Singleton (DI containers replaced it), use Factory often
+without naming it, and use Builder via TypeScript options objects. Knowing the names lets
+you read older code and understand interviews.
+
+<KeyTakeaways
+  items={[
+    'Singletons are easy to overuse; prefer DI for testability.',
+    'A factory hides which concrete class is built; callers stay decoupled.',
+    'Builder (or an options object) cures constructors with too many parameters.',
+    'Modern frameworks (DI containers) cover most creational needs out of the box.',
+    'The patterns are vocabulary, not laws — use them when they reduce pain.',
+  ]}
+/>

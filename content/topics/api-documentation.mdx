@@ -1,0 +1,137 @@
+<Lead>
+An undocumented API is a broken API. Generate (don't hand-write) an OpenAPI spec from
+the code, serve it through Swagger UI or Redoc, and treat the docs as a first-class
+deliverable. Good developer experience is a product feature.
+</Lead>
+
+## The big idea
+
+Docs that live next to the code, generated automatically, that **fail your build if the
+code lies**. Hand-written docs go stale within a sprint; generated docs can't.
+
+<BoxFlow
+  nodes={[
+    { label: 'Code annotations', detail: 'or schema', tone: 'primary' },
+    { label: 'Generator', detail: 'FastAPI / nest-openapi / etc.', tone: 'success' },
+    { label: 'openapi.yaml', tone: 'warn' },
+    { label: 'Swagger UI / Redoc', detail: 'human docs', tone: 'success' },
+    { label: 'Codegen', detail: 'typed client SDK', tone: 'muted' },
+  ]}
+/>
+
+## OpenAPI in 30 seconds
+
+A YAML/JSON document that describes:
+
+```yaml
+openapi: 3.1.0
+info:
+  title: Books API
+  version: 1.2.0
+paths:
+  /books/{id}:
+    get:
+      summary: Get a book by id
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: Found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Book' }
+        '404':
+          description: Not found
+components:
+  schemas:
+    Book:
+      type: object
+      required: [id, title, author_id]
+      properties:
+        id:        { type: integer }
+        title:     { type: string, maxLength: 200 }
+        author_id: { type: integer }
+```
+
+From this one document you get: human-readable docs, request/response validation, mock
+servers, typed clients in any language. The same one document. That's the win.
+
+## Frameworks generate it for you
+
+Don't hand-write OpenAPI. The framework already knows the routes and types — let it
+emit the spec.
+
+<DefinitionList>
+  <Definition term="FastAPI">Out-of-the-box at `/openapi.json`. Annotate routes with Pydantic models; spec stays in sync forever.</Definition>
+  <Definition term="NestJS">`@nestjs/swagger` decorates DTOs and controllers; spec served at `/api`.</Definition>
+  <Definition term=".NET">`Swashbuckle` reads attributes and XML comments. Effectively automatic.</Definition>
+  <Definition term="Go / Rust">Slightly more work — annotate routes with `swaggo` or `utoipa`.</Definition>
+  <Definition term="Schema-first">Write the OpenAPI spec first, generate stubs (server + client) from it. Best when the API is shared between many teams.</Definition>
+</DefinitionList>
+
+## Beyond the spec
+
+A great docs page has more than the schema:
+
+<Steps>
+  <Step title="Getting-started snippet">
+    Copy-paste curl that works against the live API in 60 seconds. Including auth.
+  </Step>
+  <Step title="Authentication overview">
+    Where do API keys come from? How are JWTs issued? Examples of every flow.
+  </Step>
+  <Step title="Pagination + error conventions">
+    Documented once, applies to every endpoint.
+  </Step>
+  <Step title="Examples per endpoint">
+    Real request + response bodies, not auto-generated `{ "id": 0 }`.
+  </Step>
+  <Step title="Changelog + versioning policy">
+    What can break between versions? When are deprecations removed?
+  </Step>
+  <Step title="Status page link">
+    Where to check whether the API is up.
+  </Step>
+</Steps>
+
+<Callout tone="tip" title="Try Redoc once">
+Swagger UI's default is the explorer-with-a-try-it-out widget. **Redoc** renders the
+same OpenAPI as a static, three-column reference page — much better for reading. Stripe's
+docs look like that for a reason.
+</Callout>
+
+## Mock servers + contract tests
+
+Once you have OpenAPI, you can:
+
+- **Mock the API** for frontend devs while the backend isn't ready (Prism, Stoplight).
+- **Validate requests/responses** in tests so the spec and the implementation can't drift.
+- **Generate clients** in TS/Python/Go from one source.
+
+```bash
+# Generate a TypeScript client from the spec
+npx openapi-typescript openapi.yaml -o src/api-types.ts
+
+# Mock the API locally
+npx @stoplight/prism mock openapi.yaml
+```
+
+## In practice
+
+A useful rubric: a new developer should be able to **make their first authenticated
+request in 5 minutes** with just the docs. If they can't, the docs are broken — not
+their understanding. Document the rough edges (rate limits, weird required headers,
+quirks of the auth flow) explicitly.
+
+<KeyTakeaways
+  items={[
+    'Generate OpenAPI from the code — never hand-write or hand-maintain.',
+    'One spec → human docs, request validation, mock server, typed clients.',
+    'Add the human parts: getting started, auth examples, pagination + error conventions.',
+    'Redoc beats Swagger UI for read-the-docs use cases.',
+    "Docs are broken if a new developer can't make a request in 5 minutes.",
+  ]}
+/>

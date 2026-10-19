@@ -1,0 +1,188 @@
+<Lead>
+The theory of REST clicks when you write your second API, not your first. The point of this
+exercise isn't a perfect service — it's the *complete loop*: schema, validation, error model,
+pagination, docs, and a curl-based smoke test you can run from memory.
+</Lead>
+
+## The big idea
+
+Pick a stack you can stomach, ship a CRUD service end-to-end, then critique it. The
+underlying tech almost doesn't matter — FastAPI, Express + Zod, NestJS, Go chi, Spring Boot
+— the muscle you're building is **wiring all the cross-cutting concerns** (validation,
+errors, auth, docs, pagination) the same way every time.
+
+## What "done" looks like
+
+<Steps>
+  <Step title="Choose the domain">
+    Three or four resources, related by foreign keys. *Books / authors* is the canonical
+    sandbox. Avoid auth-heavy domains until later.
+  </Step>
+  <Step title="Model the resources">
+    Write the **OpenAPI spec or the schema first** (Zod, Pydantic, `.proto`). The schema is
+    the contract; everything else is generated from it.
+  </Step>
+  <Step title="Stand up the routes">
+    `GET /books`, `GET /books/:id`, `POST /books`, `PATCH /books/:id`, `DELETE /books/:id`.
+    Match the REST conventions; resist clever URLs.
+  </Step>
+  <Step title="Pick one error shape">
+    Use a single response model for errors. Return the right status family. Never `200` with
+    `{"error": "..."}` in the body.
+  </Step>
+  <Step title="Add pagination + filtering">
+    `?page` + `?per_page` (or `?cursor=`). Decide what's filterable and document it.
+  </Step>
+  <Step title="Validate every input">
+    Reject malformed payloads at the boundary with a clear 400. Don't trust client types.
+  </Step>
+  <Step title="Generate docs">
+    OpenAPI / Swagger UI / Redoc — one command, no hand-written docs.
+  </Step>
+  <Step title="Smoke test with curl">
+    A README with 6-8 commands that exercise the happy path and one failure case for each
+    endpoint. If a teammate can copy them and the API works, you're done.
+  </Step>
+</Steps>
+
+## A complete request, end to end
+
+<BoxFlow
+  nodes={[
+    { label: 'curl client', tone: 'muted' },
+    { label: 'Routing', detail: 'method + path', tone: 'default' },
+    { label: 'Middleware', detail: 'auth, log, trace', tone: 'primary' },
+    { label: 'Validation', detail: 'schema parse', tone: 'primary' },
+    { label: 'Handler', detail: 'business logic', tone: 'success' },
+    { label: 'Response', detail: 'status + body', tone: 'success' },
+  ]}
+/>
+
+## Reference implementation
+
+<CodeTabs>
+  <CodeTab lang="ts">
+    ```ts
+    import express from 'express';
+    import { z } from 'zod';
+
+    const app = express();
+    app.use(express.json());
+
+    const BookIn = z.object({
+      title: z.string().min(1).max(200),
+      author_id: z.number().int(),
+    });
+    type BookIn = z.infer<typeof BookIn>;
+    type Book = BookIn & { id: number };
+
+    // in-memory store; replace with a real DB
+    const DB = new Map<number, Book>();
+    let NEXT_ID = 1;
+
+    app.post('/books', (req, res) => {
+      const parsed = BookIn.safeParse(req.body);
+      if (!parsed.success) return res.status(422).json({ error: parsed.error });
+      const book: Book = { id: NEXT_ID++, ...parsed.data };
+      DB.set(book.id, book);
+      res.status(201).json(book);
+    });
+
+    app.get('/books', (req, res) => {
+      const page = Math.max(1, Number(req.query.page ?? 1));
+      const perPage = Math.min(100, Math.max(1, Number(req.query.per_page ?? 20)));
+      const items = Array.from(DB.values());
+      const start = (page - 1) * perPage;
+      res.json(items.slice(start, start + perPage));
+    });
+
+    app.get('/books/:id', (req, res) => {
+      const book = DB.get(Number(req.params.id));
+      if (!book) return res.status(404).json({ detail: 'Book not found' });
+      res.json(book);
+    });
+    ```
+  </CodeTab>
+  <CodeTab lang="python">
+    ```python
+    from fastapi import FastAPI, HTTPException, Query
+    from pydantic import BaseModel, Field
+    from typing import Annotated
+
+    app = FastAPI(title="Books API", version="1.0.0")
+
+    class BookIn(BaseModel):
+        title: str = Field(min_length=1, max_length=200)
+        author_id: int
+
+    class Book(BookIn):
+        id: int
+
+    # in-memory store; replace with a real DB
+    DB: dict[int, Book] = {}
+    NEXT_ID = 1
+
+    @app.post("/books", status_code=201, response_model=Book)
+    def create_book(payload: BookIn) -> Book:
+        global NEXT_ID
+        book = Book(id=NEXT_ID, **payload.model_dump())
+        DB[NEXT_ID] = book
+        NEXT_ID += 1
+        return book
+
+    @app.get("/books", response_model=list[Book])
+    def list_books(
+        page: Annotated[int, Query(ge=1)] = 1,
+        per_page: Annotated[int, Query(ge=1, le=100)] = 20,
+    ):
+        items = list(DB.values())
+        start = (page - 1) * per_page
+        return items[start:start + per_page]
+
+    @app.get("/books/{book_id}", response_model=Book)
+    def get_book(book_id: int):
+        if book_id not in DB:
+            raise HTTPException(status_code=404, detail="Book not found")
+        return DB[book_id]
+    ```
+  </CodeTab>
+</CodeTabs>
+
+<Callout tone="tip" title="The 80% that beginners skip">
+The hard part isn't the routes — it's everything *around* them: a consistent error model,
+pagination on every list, an OpenAPI spec that matches reality, and request IDs in your logs
+so you can trace a curl call through three middlewares.
+</Callout>
+
+## Smoke-test script
+
+```bash
+# happy path
+curl -s -X POST http://localhost:8000/books \
+  -H 'content-type: application/json' \
+  -d '{"title":"A Wizard of Earthsea","author_id":1}' | jq
+
+curl -s http://localhost:8000/books | jq
+curl -s http://localhost:8000/books/1 | jq
+
+# error cases
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8000/books/9999     # 404
+curl -s -X POST http://localhost:8000/books \
+  -H 'content-type: application/json' -d '{}'                                  # 422
+```
+
+## In practice
+
+Once the books API works, **repeat with a different stack**. The friction differences (how
+each framework handles validation, where errors are caught, how middleware composes) teach
+more than reading a book ever will.
+
+<KeyTakeaways
+  items={[
+    "Start from the schema, not the route handlers.",
+    'One error shape, one pagination convention, one auth pattern — everywhere.',
+    'Generate OpenAPI/Swagger; never hand-write API docs.',
+    'A 6-line `curl` script that exercises the happy + sad paths is your acceptance test.',
+    "Build it twice in two different stacks — that's where the patterns sink in.",
+  ]}
+/>

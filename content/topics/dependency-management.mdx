@@ -1,0 +1,117 @@
+<Lead>
+Dependencies are borrowed code plus borrowed risk. Good dependency management keeps
+builds reproducible, upgrades intentional, and supply-chain surprises boring.
+</Lead>
+
+## The big idea
+
+Every package you install becomes part of your production system.
+
+<BoxFlow
+  nodes={[
+    { label: 'Manifest', detail: 'what you asked for', tone: 'primary' },
+    { label: 'Resolver', detail: 'version choice', tone: 'default' },
+    { label: 'Lockfile', detail: 'exact graph', tone: 'success' },
+    { label: 'Install', detail: 'code on disk', tone: 'muted' },
+    { label: 'Runtime', detail: 'risk + behavior', tone: 'warn' },
+  ]}
+/>
+
+Treat package changes like code changes. Review them, test them, and know how to roll
+them back.
+
+## Manifest vs lockfile
+
+<DefinitionList>
+  <Definition term="Manifest">`package.json`, `pyproject.toml`, `go.mod`. The direct dependencies and allowed ranges.</Definition>
+  <Definition term="Lockfile">`package-lock.json`, `pnpm-lock.yaml`, `uv.lock`, `poetry.lock`. The exact resolved graph.</Definition>
+  <Definition term="Direct dependency">A package your code imports directly.</Definition>
+  <Definition term="Transitive dependency">A package pulled in by another package.</Definition>
+</DefinitionList>
+
+Applications should usually commit lockfiles. Libraries often avoid strict app-style
+lockfiles for consumers, depending on ecosystem conventions.
+
+## Semantic versioning
+
+SemVer is `MAJOR.MINOR.PATCH`:
+
+- Major: breaking changes.
+- Minor: backward-compatible features.
+- Patch: backward-compatible fixes.
+
+Version ranges are promises plus trust. `^1.2.3` accepts many future versions in the same
+major line. That is useful for fixes, but it means the lockfile is what makes installs
+repeatable.
+
+## Add packages slowly
+
+Before adding a package, ask:
+
+<Steps>
+  <Step title="Is the problem core or tiny?">
+    A 10-line helper may be safer than a dependency tree with 40 packages.
+  </Step>
+  <Step title="Is it maintained?">
+    Check recent releases, issue health, docs, and ecosystem adoption.
+  </Step>
+  <Step title="What does it run?">
+    Be extra cautious with packages that execute scripts during install or build.
+  </Step>
+  <Step title="Can we remove it later?">
+    Wrap large dependencies at the boundary so the whole app does not depend on their API.
+  </Step>
+</Steps>
+
+## Upgrade safely
+
+```bash
+npm outdated
+npm audit
+npm update <package>
+npm test
+npm run build
+```
+
+For Python:
+
+```bash
+uv lock --upgrade-package fastapi
+uv run pytest
+```
+
+Do not blindly upgrade the whole world during an unrelated feature. Small upgrade PRs are
+easier to review and roll back.
+
+## Supply-chain basics
+
+<Compare>
+  <Do>
+    - Pin tool versions in CI.
+    - Commit lockfiles for applications.
+    - Use Dependabot/Renovate with tests.
+    - Remove unused packages.
+  </Do>
+  <Dont>
+    - Paste random install commands into production images.
+    - Ignore install scripts in sensitive environments.
+    - Mix feature work and giant dependency upgrades.
+    - Keep abandoned packages forever because "it still works."
+  </Dont>
+</Compare>
+
+## In practice
+
+Pick one project and explain its dependency graph: package manager, manifest, lockfile,
+install command, build command, and upgrade workflow. If you cannot reproduce a clean
+install from those files, the project is not fully buildable.
+
+<KeyTakeaways
+  items={[
+    "Dependencies are production code you did not write, so review them deliberately.",
+    "The manifest describes allowed ranges; the lockfile records the exact resolved graph.",
+    "Commit application lockfiles to make builds reproducible.",
+    "Upgrade in small batches with tests and build checks.",
+    "Prefer fewer dependencies unless the package removes real complexity or risk.",
+  ]}
+/>

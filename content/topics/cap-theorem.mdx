@@ -1,0 +1,123 @@
+<Lead>
+CAP says: in a distributed system, when a network partition happens, you must choose
+between staying **consistent** (refuse some writes) or staying **available** (accept
+divergent state). The interesting nuance lives in PACELC and the spectrum of consistency
+models on either side of that choice.
+</Lead>
+
+## The big idea
+
+Three properties of a distributed datastore:
+
+<DefinitionList>
+  <Definition term="C — Consistency">Every read sees the most recent write (linearizable).</Definition>
+  <Definition term="A — Availability">Every request gets a (non-error) response, even if some nodes are down.</Definition>
+  <Definition term="P — Partition tolerance">The system keeps working even when nodes can't talk to each other.</Definition>
+</DefinitionList>
+
+The slogan "pick two of three" is misleading. **Partitions happen in any real network**;
+you don't get to choose P. So the real choice is: **when a partition occurs, do you give
+up C or A?**
+
+<BoxFlow
+  direction="vertical"
+  nodes={[
+    { label: 'Partition occurs', tone: 'warn' },
+    { label: 'CP — refuse writes, stay consistent', detail: 'examples: HBase, MongoDB (default), Etcd, Zookeeper', tone: 'primary' },
+    { label: 'AP — accept writes, reconcile later', detail: 'examples: Cassandra, DynamoDB, Riak', tone: 'success' },
+  ]}
+/>
+
+## CP in practice
+
+When the network splits, the minority side refuses writes (sometimes reads too). Better
+to be **temporarily unavailable** than wrong.
+
+Use when:
+- You hold money or units of inventory.
+- You can't replay history easily.
+- A wrong answer is worse than no answer.
+
+The price: nodes on the wrong side of a partition return 5xx until the partition heals
+or quorum is re-established. Plan your client retry behaviour accordingly.
+
+## AP in practice
+
+When the network splits, every node keeps accepting writes. Different nodes will
+temporarily hold different versions of the same key. The system reconciles when the
+partition heals — using vector clocks, last-write-wins, CRDTs, or domain-specific merge
+rules.
+
+Use when:
+- The cost of being briefly stale is small.
+- You can build a sensible merge (counters, sets, "any view is OK").
+- Availability is the user-visible promise.
+
+## PACELC — the *also* part
+
+CAP only talks about partitions. Most of the time there isn't one. PACELC adds: **Else,
+do you optimise for latency or consistency?**
+
+<Comparison
+  leftTitle="Partitioned"
+  rightTitle="Else (normal)"
+  rows={[
+    { attribute: 'CP / EC', left: 'Consistent (refuse writes)', right: 'Consistent (sync replicate)' },
+    { attribute: 'CP / EL', left: 'Consistent (refuse writes)', right: 'Latency-focused (async replicate)' },
+    { attribute: 'AP / EC', left: 'Available (diverge)', right: 'Consistent (sync replicate)' },
+    { attribute: 'AP / EL', left: 'Available (diverge)', right: 'Latency-focused (async replicate)' },
+  ]}
+/>
+
+Most "NoSQL at scale" choices are **AP/EL** by default — accept staleness for speed and
+availability. Most "boring relational" choices are **CP/EC** — slower writes, no
+surprises.
+
+## Consistency spectrum
+
+It's not binary. From strict to lax:
+
+<DefinitionList>
+  <Definition term="Linearizable">All reads see the most recent write. The strictest. Expensive.</Definition>
+  <Definition term="Sequential">All clients see writes in the same order, but not necessarily the latest.</Definition>
+  <Definition term="Causal">If A caused B, every client sees A before B. Otherwise no ordering guarantee.</Definition>
+  <Definition term="Read-your-writes">You always see your own writes; other people might be behind.</Definition>
+  <Definition term="Eventual">Replicas converge eventually. No order, no guarantees in the meantime.</Definition>
+</DefinitionList>
+
+Most user-facing apps want **read-your-writes for the writing user + eventual for others
+— close enough to feel consistent without paying for linearizability.**
+
+## Worked example: shopping cart
+
+<Compare>
+  <Do>
+    **AP**: Two devices add items to the cart during a partition. On reconciliation,
+    *union* the two carts. Worst case: an item shows up twice — fix with a quantity merge
+    or a clear "duplicate?" prompt.
+  </Do>
+  <Dont>
+    **CP for the cart**: The same scenario fails the second add with "service
+    unavailable" mid-shopping. Users hate that more than seeing two of an item.
+  </Dont>
+</Compare>
+
+But the **checkout** that charges the card *should* be CP — bad for that to diverge.
+
+## In practice
+
+You're rarely choosing a system based purely on CAP. You're picking a database that
+already lives somewhere on the spectrum and adjusting *consistency levels per operation*
+(Cassandra's `ONE/QUORUM/ALL`, DynamoDB's strongly-consistent reads, Postgres replicas).
+Know which knob does what.
+
+<KeyTakeaways
+  items={[
+    'Partition tolerance is mandatory in any real network; the real trade is C vs A.',
+    'CP: refuse writes on partition (financial, inventory, coordination).',
+    'AP: accept and reconcile (carts, feeds, recommendations).',
+    'PACELC adds the latency vs consistency choice for normal operation — usually the bigger lever.',
+    'Consistency is a spectrum; pick read-your-writes for the writer, eventual for others.',
+    "Per-operation consistency knobs let you tune CAP per query, not just per database.",
+  ]}
+/>

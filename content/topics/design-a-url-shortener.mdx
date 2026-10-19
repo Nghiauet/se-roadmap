@@ -1,0 +1,191 @@
+<Lead>
+The bit.ly clone is the canonical system-design warm-up. Map a short code to a long URL,
+serve billions of redirects, handle abuse and analytics. The exercise sharpens estimation,
+key generation, caching, and the read/write split.
+</Lead>
+
+## The big idea
+
+You need two endpoints and a single mapping table — and then a lot of careful reasoning
+about scale.
+
+<BoxFlow
+  nodes={[
+    { label: 'POST /shorten', detail: 'long → short', tone: 'primary' },
+    { label: 'GET /:code', detail: 'short → 301 redirect', tone: 'success' },
+  ]}
+/>
+
+## Estimate the load
+
+Before anything else, sanity-check the numbers. Suppose 100 million new short URLs per
+month and 100× more reads than writes.
+
+```text
+Writes:     100M / 30 days / 86_400s ≈ 40 / sec
+Reads:      ~ 4000 / sec  (peak: 5×, so ~20k/sec)
+Storage:    100M × 500 bytes ≈ 50 GB / month
+Reads / yr: 100M × 100 × 12 ≈ 120B redirects / year
+```
+
+Conclusion: writes are trivial; reads dominate; everything is cacheable.
+
+## The short code
+
+The short code is the URL path. Two constraints: must be short (~7 chars) and globally
+unique.
+
+<Comparison
+  leftTitle="Approach"
+  rightTitle="Trade-off"
+  rows={[
+    {
+      attribute: 'Hash the URL (MD5 → first 7 chars)',
+      left: 'Stable for the same URL.',
+      right: 'Collisions; not all-or-nothing on collision retry.',
+    },
+    {
+      attribute: 'Random base62 (0-9a-zA-Z)',
+      left: 'Simple; 62^7 ≈ 3.5T codes.',
+      right: 'Need collision check on insert.',
+    },
+    {
+      attribute: 'Counter → base62',
+      left: 'No collisions by construction; predictable order.',
+      right: 'Counter is a contention point; reveals total volume.',
+    },
+    {
+      attribute: 'Pre-allocated ranges',
+      left: 'Counter sharded across nodes — each grabs a range.',
+      right: 'Best for high write throughput; adds coordination.',
+    },
+  ]}
+/>
+
+A common choice: a monotonic counter (or Snowflake-style ID) → base62. Predictability
+is fine for the use case (short links aren't secrets).
+
+## The data model
+
+```sql
+CREATE TABLE links (
+  code        TEXT PRIMARY KEY,                  -- 'aZ3xK9p'
+  long_url    TEXT NOT NULL,
+  user_id     BIGINT REFERENCES users(id),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at  TIMESTAMPTZ,
+  is_blocked  BOOLEAN NOT NULL DEFAULT false
+);
+
+CREATE TABLE click_events (
+  id          BIGSERIAL PRIMARY KEY,
+  code        TEXT NOT NULL,
+  occurred_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  ua          TEXT,
+  ip_country  TEXT
+);
+```
+
+The `links` table is small enough to fit in RAM (50GB after a year — still cheap). The
+`click_events` table grows fast — push it to a column store (ClickHouse, BigQuery) for
+analytics; never join against it in the redirect path.
+
+## The redirect path
+
+This is the hot path. Optimise it ruthlessly.
+
+<BoxFlow
+  nodes={[
+    { label: 'CDN edge', detail: 'cache 30s', tone: 'muted' },
+    { label: 'API', detail: 'auth + log', tone: 'primary' },
+    { label: 'Cache (Redis)', detail: 'lookup code', tone: 'success' },
+    { label: 'DB', detail: 'fallback', tone: 'warn' },
+    { label: '301 redirect', tone: 'success' },
+  ]}
+/>
+
+<CodeTabs>
+  <CodeTab lang="ts">
+    ```ts
+    async function resolve(code: string): Promise<string | null> {
+      const cached = await redis.get(`link:${code}`);
+      if (cached) return cached;
+
+      const row = await db.link.findUnique({ where: { code } });
+      if (!row || row.is_blocked) return null;
+
+      await redis.set(`link:${code}`, row.long_url, 'EX', 3600);
+      return row.long_url;
+    }
+    ```
+  </CodeTab>
+  <CodeTab lang="python">
+    ```python
+    async def resolve(code: str) -> str | None:
+        cached = await redis.get(f"link:{code}")
+        if cached:
+            return cached
+
+        row = await db.link.find_unique(where={"code": code})
+        if row is None or row.is_blocked:
+            return None
+
+        await redis.set(f"link:{code}", row.long_url, ex=3600)
+        return row.long_url
+    ```
+  </CodeTab>
+</CodeTabs>
+
+<Callout tone="tip" title="301 vs 302">
+**301** Moved Permanently: browsers may cache the mapping forever — fast for users, bad
+for your analytics (you don't see the click). **302** Found: client must hit your server
+every time — full analytics, more traffic. Most short-link services pick 302 for
+analytics. Some let users choose.
+</Callout>
+
+## Analytics and abuse
+
+<Steps>
+  <Step title="Click logging">
+    Don't write `click_events` synchronously — emit to a queue from the redirect
+    handler, persist via a worker.
+  </Step>
+  <Step title="Abuse detection">
+    Check the long URL against safe-browsing APIs at creation time. Flag domains
+    associated with phishing or malware. Mark `is_blocked = true` and serve a warning
+    page instead of redirecting.
+  </Step>
+  <Step title="Rate limiting">
+    Per-IP or per-user on `POST /shorten` — bots will try to register millions of codes.
+  </Step>
+  <Step title="Expiry">
+    Optional `expires_at` lets users create temporary links. A background job soft-deletes
+    expired entries.
+  </Step>
+</Steps>
+
+## Scaling cuts
+
+If reads spike beyond what one cache cluster can serve:
+
+- **CDN-cache 301s for a few seconds** — many providers do this natively.
+- **Shard Redis by code prefix.**
+- **Read replicas on the DB** are gratuitously simple here — reads are idempotent.
+- **Pre-warm cache** from access logs after a deploy.
+
+## In practice
+
+The exercise is less about the implementation and more about the *reasoning*: estimate
+first, choose the key strategy with intent, separate the hot read path from the cold
+analytics path, and decide explicitly which short-link properties matter to you (random
+vs sequential codes, 301 vs 302, expiry, custom codes).
+
+<KeyTakeaways
+  items={[
+    'Estimate load first — back-of-envelope shapes every decision.',
+    'Counter → base62 is the simplest collision-free short-code scheme.',
+    'The redirect path must be fast and cached; the analytics path is async.',
+    "301 caches in browsers (fast, no analytics); 302 hits your server every time.",
+    "Push click events to a queue → analytics store; never join them in the redirect.",
+  ]}
+/>

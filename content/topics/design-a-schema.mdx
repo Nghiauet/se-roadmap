@@ -1,0 +1,148 @@
+<Lead>
+Designing a schema is half drawing tables and half answering "what queries does this
+support?" The exercise: model a real domain end-to-end, write the queries against it,
+critique what you got. Repeat until the queries are boring.
+</Lead>
+
+## The big idea
+
+You are designing two things at once: the **shape** (tables, columns, keys) and the
+**queries** the shape will serve. Doing one without the other gives you either a
+beautifully-normalised schema you can't read from, or a "fast" schema with three sources
+of truth for the same fact.
+
+<BoxFlow
+  nodes={[
+    { label: 'List the domain entities', tone: 'primary' },
+    { label: 'List the top 10 queries', tone: 'success' },
+    { label: 'Sketch tables + keys', tone: 'warn' },
+    { label: 'Write the queries on paper', tone: 'success' },
+    { label: 'Critique. Iterate.', tone: 'muted' },
+  ]}
+/>
+
+## The exercise — a simple e-commerce
+
+Pick a domain you understand. We'll use e-commerce because it has every interesting
+shape: many-to-many, snapshots, status machines, money.
+
+<Steps>
+  <Step title="Entities">
+    `User`, `Product`, `Cart`, `Order`, `OrderItem`, `Payment`, `Address`. Note `Cart`
+    and `Order` are different things — a cart can have a checkout, an order is a paid
+    record.
+  </Step>
+  <Step title="Top queries">
+    - List a user's recent orders.
+    - Show order detail with line items and product names.
+    - Top-selling products this week.
+    - Cart for a logged-in user.
+    - Search products by name.
+  </Step>
+  <Step title="Sketch the tables">
+    See the schema below.
+  </Step>
+  <Step title="Walk each query through the schema">
+    Does every join land on an indexed column? Does any query need a scan?
+  </Step>
+  <Step title="Critique">
+    What changes if the product price moves? What if you have 10M users? What's the
+    rollback story if an order is cancelled?
+  </Step>
+</Steps>
+
+## A reference schema
+
+```sql
+CREATE TABLE users (
+  id           BIGSERIAL PRIMARY KEY,
+  email        TEXT NOT NULL UNIQUE,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE products (
+  id           BIGSERIAL PRIMARY KEY,
+  sku          TEXT NOT NULL UNIQUE,
+  name         TEXT NOT NULL,
+  price_cents  INTEGER NOT NULL CHECK (price_cents >= 0),
+  stock        INTEGER NOT NULL DEFAULT 0,
+  archived_at  TIMESTAMPTZ
+);
+CREATE INDEX idx_products_search ON products USING GIN (to_tsvector('english', name));
+
+CREATE TABLE addresses (
+  id           BIGSERIAL PRIMARY KEY,
+  user_id      BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  line1        TEXT NOT NULL,
+  city         TEXT NOT NULL,
+  country      TEXT NOT NULL
+);
+
+CREATE TABLE orders (
+  id              BIGSERIAL PRIMARY KEY,
+  user_id         BIGINT NOT NULL REFERENCES users(id),
+  shipping_addr_id BIGINT REFERENCES addresses(id),
+  status          TEXT NOT NULL CHECK (status IN ('new','paid','shipped','delivered','cancelled')),
+  total_cents     INTEGER NOT NULL,
+  placed_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_orders_user_placed ON orders (user_id, placed_at DESC);
+
+CREATE TABLE order_items (
+  order_id       BIGINT NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+  product_id     BIGINT NOT NULL REFERENCES products(id),
+  quantity       INTEGER NOT NULL CHECK (quantity > 0),
+  unit_price_cents INTEGER NOT NULL,             -- snapshot at order time
+  PRIMARY KEY (order_id, product_id)
+);
+CREATE INDEX idx_items_product ON order_items (product_id);
+
+CREATE TABLE payments (
+  id             BIGSERIAL PRIMARY KEY,
+  order_id       BIGINT NOT NULL REFERENCES orders(id),
+  amount_cents   INTEGER NOT NULL,
+  status         TEXT NOT NULL CHECK (status IN ('pending','paid','failed','refunded')),
+  external_id    TEXT,
+  processed_at   TIMESTAMPTZ
+);
+CREATE INDEX idx_payments_order ON payments (order_id);
+```
+
+## Critique it like a reviewer
+
+Run each query in your head and check:
+
+<DefinitionList>
+  <Definition term="Recent orders for user 42">`idx_orders_user_placed` — index used. Good.</Definition>
+  <Definition term="Order detail with item names">JOIN through `order_items` to `products` on PK. Cheap.</Definition>
+  <Definition term="Top-selling products this week">Aggregate over `order_items` filtered by `orders.placed_at`. Needs a composite index or a materialised view if traffic is heavy.</Definition>
+  <Definition term="Search products by name">GIN index does it. Switch to a search engine if you outgrow it.</Definition>
+</DefinitionList>
+
+## Design decisions to spot
+
+Read the schema and look for **intentional decisions**:
+
+- `order_items.unit_price_cents` is **denormalised on purpose** — the customer paid that
+  price, and the product price can change later.
+- `archived_at` instead of `is_active` — soft delete with the timestamp doubles as a
+  historical record.
+- Status is a `CHECK`-constrained text, not an enum type — easier to evolve in migrations.
+- `addresses` is referenced from `orders` but kept as its own table — users have many
+  addresses, and an order needs a stable snapshot of where it shipped.
+
+## In practice
+
+The first schema you write will be wrong, and that's fine — migrations exist for this.
+The bigger mistake is *not writing the queries first*. Open dbdiagram.io, sketch the
+schema, write five queries against it on paper. Iterate. Then commit a migration.
+
+<KeyTakeaways
+  items={[
+    'Design the schema and the queries together — neither alone is enough.',
+    'Money columns store cents as INTEGER; never float.',
+    "Snapshot prices and addresses on the order — the source can change tomorrow.",
+    'Composite indexes on `(user_id, created_at DESC)` style pairs are the bread and butter.',
+    'Critique with the top-10 queries; rewrite until each lands on an index.',
+  ]}
+/>

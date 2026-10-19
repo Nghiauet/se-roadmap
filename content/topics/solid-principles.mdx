@@ -1,0 +1,251 @@
+<Lead>
+SOLID is five rules of thumb for keeping object-oriented code changeable. Applied
+mechanically they over-engineer; applied when you feel the pain they describe, they pay
+back tenfold. The trick is recognising the pain.
+</Lead>
+
+## The big idea
+
+Each letter describes one thing that makes code easy to change:
+
+<DefinitionList>
+  <Definition term="S — Single Responsibility">A class should have one reason to change.</Definition>
+  <Definition term="O — Open/Closed">Open to extension, closed to modification.</Definition>
+  <Definition term="L — Liskov Substitution">Subtypes must be drop-in replacements for their base type.</Definition>
+  <Definition term="I — Interface Segregation">Many small interfaces beat one fat one.</Definition>
+  <Definition term="D — Dependency Inversion">Depend on abstractions, not concretions.</Definition>
+</DefinitionList>
+
+## S — Single Responsibility
+
+A class that *parses, formats, validates, persists, and emails* a report has five reasons
+to change. Each split into its own class can change independently.
+
+<Compare>
+  <Do>
+    <CodeTabs>
+      <CodeTab lang="ts">
+        ```ts
+        class ReportParser   { parse(raw: string): Report { /* … */ } }
+        class ReportPersister { save(r: Report): Promise<void> { /* … */ } }
+        class ReportEmailer  { email(r: Report): Promise<void> { /* … */ } }
+        ```
+      </CodeTab>
+      <CodeTab lang="python">
+        ```python
+        class ReportParser:
+            def parse(self, raw: str) -> Report: ...
+        class ReportPersister:
+            async def save(self, r: Report) -> None: ...
+        class ReportEmailer:
+            async def email(self, r: Report) -> None: ...
+        ```
+      </CodeTab>
+    </CodeTabs>
+    One reason to change each.
+  </Do>
+  <Dont>
+    <CodeTabs>
+      <CodeTab lang="ts">
+        ```ts
+        class ReportService {
+          parse() { /* … */ }
+          validate() { /* … */ }
+          saveToDb() { /* … */ }
+          formatForPdf() { /* … */ }
+          sendEmail() { /* … */ }
+        }
+        ```
+      </CodeTab>
+      <CodeTab lang="python">
+        ```python
+        class ReportService:
+            def parse(self): ...
+            def validate(self): ...
+            def save_to_db(self): ...
+            def format_for_pdf(self): ...
+            def send_email(self): ...
+        ```
+      </CodeTab>
+    </CodeTabs>
+    Five reasons to change. Five places to break a test.
+  </Dont>
+</Compare>
+
+## O — Open/Closed
+
+Adding a new payment method shouldn't require editing the existing `pay()` function. Make
+it accept a strategy or a new subclass instead.
+
+<CodeTabs>
+  <CodeTab lang="ts">
+    ```ts
+    interface Payment { charge(cents: number): Promise<void>; }
+
+    class StripeCard implements Payment { /* … */ }
+    class AchBank   implements Payment { /* … */ }
+
+    // Adding `Bitcoin` means *adding* a new class — not editing existing ones.
+    class Bitcoin implements Payment { /* … */ }
+    ```
+  </CodeTab>
+  <CodeTab lang="python">
+    ```python
+    from typing import Protocol
+
+    class Payment(Protocol):
+        async def charge(self, cents: int) -> None: ...
+
+    class StripeCard: ...
+    class AchBank: ...
+
+    # Adding `Bitcoin` means *adding* a new class — not editing existing ones.
+    class Bitcoin: ...
+    ```
+  </CodeTab>
+</CodeTabs>
+
+Strategy and Decorator (see [Behavioral patterns](/topic/behavioral-patterns)) are the
+mechanical ways to satisfy O/C.
+
+## L — Liskov Substitution
+
+If `Square extends Rectangle`, anywhere you accept a `Rectangle` you must accept a
+`Square`. The classic violation: setting `width` on a Square also changes its height,
+breaking callers who set width and height independently. Subtypes must honour the
+*contract* of the base, not just the type signature.
+
+<Callout tone="warn" title="The smell">
+You have a base class with code like `if (this instanceof Square) …` or `if
+(account.type === 'business') account.bonus = 0`. The subtype is *changing the meaning* of
+the operation. Split the hierarchy.
+</Callout>
+
+## I — Interface Segregation
+
+A class shouldn't be forced to implement methods it doesn't need. One fat interface that
+mixes concerns becomes a *forced lie* for anyone implementing it.
+
+<Compare>
+  <Do>
+    <CodeTabs>
+      <CodeTab lang="ts">
+        ```ts
+        interface Readable<T> { read(id: number): Promise<T | null>; }
+        interface Writable<T> { write(value: T): Promise<void>; }
+
+        class ReadOnlyCache<T> implements Readable<T> { /* no write */ }
+        ```
+      </CodeTab>
+      <CodeTab lang="python">
+        ```python
+        from typing import Protocol, Generic, TypeVar
+        T = TypeVar("T")
+
+        class Readable(Protocol, Generic[T]):
+            async def read(self, id: int) -> T | None: ...
+
+        class Writable(Protocol, Generic[T]):
+            async def write(self, value: T) -> None: ...
+
+        class ReadOnlyCache(Generic[T]):
+            async def read(self, id: int) -> T | None: ...  # no write
+        ```
+      </CodeTab>
+    </CodeTabs>
+  </Do>
+  <Dont>
+    <CodeTabs>
+      <CodeTab lang="ts">
+        ```ts
+        interface Repository<T> {
+          read(id: number): Promise<T | null>;
+          write(value: T): Promise<void>;
+          delete(id: number): Promise<void>;
+          search(q: string): Promise<T[]>;
+          bulkLoad(items: T[]): Promise<void>;
+        }
+        // every implementation either lies or throws on half the methods
+        ```
+      </CodeTab>
+      <CodeTab lang="python">
+        ```python
+        from typing import Protocol, Generic, TypeVar
+        T = TypeVar("T")
+
+        class Repository(Protocol, Generic[T]):
+            async def read(self, id: int) -> T | None: ...
+            async def write(self, value: T) -> None: ...
+            async def delete(self, id: int) -> None: ...
+            async def search(self, q: str) -> list[T]: ...
+            async def bulk_load(self, items: list[T]) -> None: ...
+        # every implementation either lies or raises on half the methods
+        ```
+      </CodeTab>
+    </CodeTabs>
+  </Dont>
+</Compare>
+
+## D — Dependency Inversion
+
+High-level modules shouldn't depend on low-level modules; both should depend on
+abstractions. In practice: depend on an interface, inject the implementation.
+
+<CodeTabs>
+  <CodeTab lang="ts">
+    ```ts
+    // good: handler depends on an interface
+    class OrderHandler {
+      constructor(private readonly repo: OrderRepository) {}
+      async place(items: Item[]) {
+        return this.repo.save({ items, status: 'new' });
+      }
+    }
+
+    // caller decides what 'repo' is — Pg, Fake, in-memory — at the edge of the app
+    new OrderHandler(new PgOrderRepository(pool));
+    ```
+  </CodeTab>
+  <CodeTab lang="python">
+    ```python
+    # good: handler depends on an interface
+    class OrderHandler:
+        def __init__(self, repo: OrderRepository) -> None:
+            self._repo = repo
+
+        async def place(self, items: list[Item]):
+            return await self._repo.save({"items": items, "status": "new"})
+
+    # caller decides what 'repo' is — Pg, Fake, in-memory — at the edge of the app
+    OrderHandler(PgOrderRepository(pool))
+    ```
+  </CodeTab>
+</CodeTabs>
+
+DI containers automate this — but the *principle* applies even without one. **Pass
+collaborators in; don't construct them inside.**
+
+## In practice
+
+You'll feel SOLID violations as friction:
+
+<DefinitionList>
+  <Definition term="Tests are hard to write">You can't mock the dependency → DI is missing.</Definition>
+  <Definition term="One bug fix breaks three other features">SRP violated; multiple reasons to change.</Definition>
+  <Definition term="Adding a feature edits a long switch">O/C violated; replace with polymorphism.</Definition>
+  <Definition term="Subclass throws `NotImplementedError`">LSP or ISP violated.</Definition>
+</DefinitionList>
+
+The principles are five different ways of saying **"make change cheap."** When change is
+cheap, everything else gets easier.
+
+<KeyTakeaways
+  items={[
+    'SOLID is about making change cheap — apply it when you feel the pain.',
+    'SRP: one class, one reason to change.',
+    'OCP: extend by adding, not editing.',
+    'LSP: subclasses must honour the base contract, not just its type.',
+    'ISP: split fat interfaces; let implementations opt into capabilities.',
+    'DIP: depend on interfaces and inject implementations.',
+  ]}
+/>

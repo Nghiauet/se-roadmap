@@ -1,0 +1,140 @@
+<Lead>
+**Normalize until it hurts, denormalize until it works.** Data modeling is the constant
+trade-off between integrity (one fact in one place) and read performance (the fact is
+already where the query needs it).
+</Lead>
+
+## The big idea
+
+Two pressures pull schemas in opposite directions:
+
+<BoxFlow
+  nodes={[
+    { label: 'Normalize', detail: 'one fact, one place', tone: 'success' },
+    { label: 'Reality check', detail: 'profile your queries', tone: 'primary' },
+    { label: 'Denormalize', detail: 'duplicate for speed', tone: 'warn' },
+  ]}
+/>
+
+Start normalised. Denormalise only where evidence shows a real performance problem you
+can't solve with an index.
+
+## Normal forms (just enough)
+
+You don't need to recite the formal definitions. The intuitive rules:
+
+<Steps>
+  <Step title="1NF — atomic values">
+    No "tags: 'cooking,baking,vegan'" in a single column. Use a related table or an array
+    type if your DB supports it.
+  </Step>
+  <Step title="2NF + 3NF — no transitive dependencies">
+    A field belongs in the table whose primary key it directly describes. If `users.city`
+    determines `users.country`, country belongs to a `cities` table.
+  </Step>
+  <Step title="BCNF and beyond">
+    You don't need this in 90% of designs. Read it when you hit the 10%.
+  </Step>
+</Steps>
+
+## A worked example
+
+E-commerce: users have orders, orders have line items, items reference products.
+
+```sql
+CREATE TABLE users (
+  id            BIGSERIAL PRIMARY KEY,
+  email         TEXT NOT NULL UNIQUE,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE products (
+  id            BIGSERIAL PRIMARY KEY,
+  sku           TEXT NOT NULL UNIQUE,
+  name          TEXT NOT NULL,
+  price_cents   INTEGER NOT NULL CHECK (price_cents >= 0)
+);
+
+CREATE TABLE orders (
+  id            BIGSERIAL PRIMARY KEY,
+  user_id       BIGINT NOT NULL REFERENCES users(id),
+  status        TEXT NOT NULL CHECK (status IN ('new','paid','shipped','cancelled')),
+  total_cents   INTEGER NOT NULL,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE order_items (
+  order_id      BIGINT NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+  product_id    BIGINT NOT NULL REFERENCES products(id),
+  quantity      INTEGER NOT NULL CHECK (quantity > 0),
+  price_cents   INTEGER NOT NULL,                 -- snapshot at time of order
+  PRIMARY KEY (order_id, product_id)
+);
+```
+
+<Callout tone="tip" title="Why duplicate `price_cents` in order_items?">
+The product price can change tomorrow, but the customer paid *today's* price. Storing the
+snapshot is **deliberate denormalisation for correctness**, not performance.
+</Callout>
+
+## When to denormalise
+
+Three legitimate reasons:
+
+<DefinitionList>
+  <Definition term="Historical accuracy">Order line items snapshot the price at purchase time.</Definition>
+  <Definition term="Hot read paths">A counter (`users.unread_count`) that would be slow to compute every page load. Keep it in sync via the write path.</Definition>
+  <Definition term="Cross-shard reads">If a join would cross a shard boundary, duplicate the data into both shards.</Definition>
+</DefinitionList>
+
+<Callout tone="warn" title="The cost of duplication">
+Every denormalised value is a *write-path obligation* — you must update it everywhere it
+lives, every time the source changes. Forgetting that is how data goes stale. Use it,
+but use it consciously.
+</Callout>
+
+## Surrogate vs natural keys
+
+<Compare>
+  <Do>
+    Use surrogate IDs (`BIGSERIAL`, UUID) as primary keys for entities. They're stable
+    when business attributes change. Add `UNIQUE` constraints on the natural keys you
+    care about (`email`, `sku`).
+  </Do>
+  <Dont>
+    Use the email as the primary key for users. The day someone changes their email is
+    the day every foreign key has to chase the change.
+  </Dont>
+</Compare>
+
+## Modeling many-to-many
+
+The bread-and-butter pattern: a *join table* with two foreign keys.
+
+```sql
+CREATE TABLE user_roles (
+  user_id  BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role_id  BIGINT NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+  granted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, role_id)
+);
+```
+
+If you find yourself adding columns to the join table (`granted_by`, `expires_at`), it
+has become a first-class entity — give it its own ID and treat it like one.
+
+## In practice
+
+Sketch the schema with sample rows in a tool like dbdiagram.io before you write a
+migration. Write the 5–10 most important queries against it on paper. If a query is ugly,
+the schema is wrong. Fix it now, not in production.
+
+<KeyTakeaways
+  items={[
+    'Start normalised: one fact, one place; foreign keys for relationships.',
+    "Denormalise only with evidence — historical snapshots, hot read paths, sharding.",
+    'Every duplicated value is a write-path obligation. Update it everywhere or lose data.',
+    'Use surrogate IDs for primary keys; constrain the natural keys separately.',
+    'Sketch the schema *with the queries* before writing the first migration.',
+  ]}
+/>

@@ -1,0 +1,191 @@
+<Lead>
+A slow query is almost always a missing or wrong index. Learn to read `EXPLAIN`, design
+composite indexes for compound predicates, and spot the N+1 anti-pattern, and you'll fix
+90% of the database performance complaints you'll ever see.
+</Lead>
+
+## The big idea
+
+An index is a *sorted lookup structure* the database keeps alongside the table. Without
+one, every query scans every row. With the right one, the database jumps straight to the
+rows it needs.
+
+<Tree
+  nodes={[
+    {
+      label: 'Root',
+      detail: 'IDs 1–10000',
+      children: [
+        {
+          label: 'Branch',
+          detail: '1–5000',
+          children: [
+            { label: 'Leaf', detail: 'pages with rows 1–2500' },
+            { label: 'Leaf', detail: 'pages with rows 2501–5000' },
+          ],
+        },
+        {
+          label: 'Branch',
+          detail: '5001–10000',
+          children: [
+            { label: 'Leaf', detail: 'pages with rows 5001–7500' },
+            { label: 'Leaf', detail: 'pages with rows 7501–10000' },
+          ],
+        },
+      ],
+    },
+  ]}
+  caption="A B-tree: each lookup costs O(log n) page reads to find the leaf."
+/>
+
+## Single-column indexes
+
+Cheap and obvious — when a column shows up alone in a `WHERE`, give it an index.
+
+```sql
+-- Without an index, this scans the whole users table.
+SELECT * FROM users WHERE email = 'ada@example.com';
+
+-- With this, it's a B-tree lookup: a few page reads.
+CREATE INDEX idx_users_email ON users (email);
+```
+
+`UNIQUE` constraints quietly add an index too — you don't always need a separate one.
+
+## Composite indexes — order matters
+
+When the `WHERE` clause has multiple columns, a composite index gives you one fast lookup
+instead of two passes.
+
+```sql
+CREATE INDEX idx_orders_user_created
+  ON orders (user_id, created_at DESC);
+
+-- Uses the index efficiently:
+SELECT * FROM orders WHERE user_id = 42 ORDER BY created_at DESC LIMIT 20;
+
+-- Can't use it as efficiently — leading column missing:
+SELECT * FROM orders WHERE created_at > NOW() - INTERVAL '1 day';
+```
+
+The **leftmost-prefix rule**: an index on `(a, b, c)` helps queries that filter by `a`,
+`a + b`, or `a + b + c`. It does *not* help a query filtering only by `b`.
+
+## Reading an `EXPLAIN`
+
+The single most useful database skill is reading the query plan. Three patterns to spot:
+
+<StatusGrid
+  items={[
+    { code: 'Seq Scan', label: 'Sequential scan', detail: 'No index used; reads every row. Fine for small tables, alarming on big ones.', tone: 'warn' },
+    { code: 'Index Scan', label: 'Index used', detail: 'B-tree jump to matching rows. Usually what you want.', tone: 'success' },
+    { code: 'Bitmap Heap', label: 'Combined index lookup', detail: 'Multiple indexes combined; still good.', tone: 'success' },
+    { code: 'Nested Loop', label: 'Join algorithm', detail: 'Fine for small joins; gets slow if the outer side is large.', tone: 'info' },
+    { code: 'Hash Join', label: 'Build + probe', detail: 'Best when one side is small enough to fit in memory.', tone: 'info' },
+    { code: 'rows=', label: 'Row estimate', detail: 'If the estimate is wildly off from reality, statistics need refreshing.', tone: 'muted' },
+  ]}
+/>
+
+```sql
+EXPLAIN ANALYZE
+SELECT * FROM orders WHERE user_id = 42 ORDER BY created_at DESC LIMIT 10;
+--                                                  QUERY PLAN
+-- Limit  (cost=0.43..15.20 rows=10 width=128) (actual time=0.04..0.07 rows=10 loops=1)
+--   ->  Index Scan using idx_orders_user_created on orders
+--         (cost=0.43..150.00 rows=102 width=128) (actual time=0.04..0.07 rows=10)
+--         Index Cond: (user_id = 42)
+```
+
+## The N+1 problem
+
+The most common ORM trap. You fetch N parents, then issue N more queries to fetch each
+parent's children.
+
+<Compare>
+  <Do>
+    <CodeTabs>
+      <CodeTab lang="ts">
+        ```ts
+        // 1 query
+        const users = await db.user.findMany({
+          include: { orders: true },
+        });
+        ```
+      </CodeTab>
+      <CodeTab lang="python">
+        ```python
+        # 1 query — SQLAlchemy eager load
+        users = (
+            session.query(User)
+            .options(selectinload(User.orders))
+            .all()
+        )
+        ```
+      </CodeTab>
+    </CodeTabs>
+  </Do>
+  <Dont>
+    <CodeTabs>
+      <CodeTab lang="ts">
+        ```ts
+        // 1 + N queries — fast at dev scale, dies at 10k rows
+        const users = await db.user.findMany();
+        for (const u of users) {
+          u.orders = await db.order.findMany({ where: { userId: u.id } });
+        }
+        ```
+      </CodeTab>
+      <CodeTab lang="python">
+        ```python
+        # 1 + N queries — fast at dev scale, dies at 10k rows
+        users = session.query(User).all()
+        for u in users:
+            u.orders = session.query(Order).filter_by(user_id=u.id).all()
+        ```
+      </CodeTab>
+    </CodeTabs>
+  </Dont>
+</Compare>
+
+Detection: log every SQL statement in dev. If you see the same query shape repeated N
+times, you have N+1.
+
+## When indexes hurt
+
+Indexes are not free:
+
+- Every `INSERT`, `UPDATE`, `DELETE` updates every index — write-heavy tables suffer.
+- They take disk space (often 20–50% of the table size).
+- Postgres needs `VACUUM` to clean up dead index entries.
+
+**Rule of thumb:** start with the indexes the queries need, profile, add or drop based on
+evidence. Don't pre-index every column.
+
+## In practice
+
+Steps when a query is slow:
+
+<Steps>
+  <Step title="Run EXPLAIN ANALYZE">
+    Read the plan. Are you scanning the whole table?
+  </Step>
+  <Step title="Find the predicate that selects the smallest set">
+    That's the column (or combination) the index should lead with.
+  </Step>
+  <Step title="Create or extend the index">
+    Composite indexes are usually the win.
+  </Step>
+  <Step title="Re-run EXPLAIN ANALYZE">
+    Confirm the plan switched to Index Scan and the actual rows are tiny.
+  </Step>
+</Steps>
+
+<KeyTakeaways
+  items={[
+    'An index is a sorted lookup — without one, the DB scans every row.',
+    "Composite indexes obey the leftmost-prefix rule — column order matters.",
+    'Reading EXPLAIN plans is the single most useful DB skill — Seq Scan on big tables is bad.',
+    'N+1 is the most common ORM bug: fetch parents and children in *one* query.',
+    'Indexes cost writes and space — add them based on profiling, not paranoia.',
+  ]}
+/>

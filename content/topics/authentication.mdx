@@ -1,0 +1,116 @@
+<Lead>
+Authentication answers "who are you?"; authorization answers "what can you do?". The
+tooling — API keys, JWTs, OAuth2 — exists on a spectrum from "trivial" to "I need to draw a
+diagram." Picking the right level for the job is half the battle.
+</Lead>
+
+## The big idea
+
+There are essentially three layers:
+
+<BoxFlow
+  nodes={[
+    { label: 'API keys', detail: 'shared secret', tone: 'muted' },
+    { label: 'Tokens (JWT)', detail: 'self-describing', tone: 'primary' },
+    { label: 'OAuth2', detail: 'delegated auth', tone: 'success' },
+  ]}
+/>
+
+Each layer solves a problem the layer below didn't. Don't reach up the stack until you
+have the problem the next layer solves.
+
+## API keys: the simplest thing that works
+
+An API key is a long random string the client sends on every request. The server looks it
+up, finds the account, and proceeds. That's it.
+
+```http
+GET /v1/orders HTTP/1.1
+Host: api.example.com
+Authorization: Bearer sk_live_4eC39Hq…
+```
+
+<Compare>
+  <Do>
+    - Use for **machine-to-machine** access where one party owns the secret.
+    - Hash keys at rest like passwords; never log them.
+    - Make them rotatable; show the key once at creation and the prefix forever after.
+  </Do>
+  <Dont>
+    - Use them for end-users via a browser. The browser will leak them.
+    - Embed them in mobile apps without server-side scoping.
+    - Send them as URL query parameters — they end up in logs and proxies.
+  </Dont>
+</Compare>
+
+## JWT: signed, self-describing tokens
+
+A JSON Web Token is three base64url-encoded strings: header, payload, signature.
+
+```text
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9            # header
+.eyJzdWIiOiI0MiIsImV4cCI6MTczMzAwMDAwMH0       # payload (claims)
+.dBjftJeZ4CVP-mB92K27uhbUJU1p1r…               # signature
+```
+
+The server signs the payload with a secret (HMAC) or a private key (RSA/EC). It can later
+**verify** the token without a database lookup: stateless auth. The trade-off is that you
+can't easily *revoke* a JWT before it expires.
+
+<SequenceDiagram
+  actors={['User', 'Auth server', 'API']}
+  steps={[
+    { from: 'User', to: 'Auth server', label: 'POST /login (creds)' },
+    { from: 'Auth server', to: 'User', label: 'access_token (JWT, 15 min)' },
+    { from: 'User', to: 'API', label: 'GET /me  + Bearer JWT' },
+    { from: 'API', to: 'User', label: 'verify signature → 200', detail: 'no DB call' },
+  ]}
+/>
+
+<Callout tone="warn" title="JWT pitfalls everyone hits">
+- **Short expiry + refresh tokens.** Never issue a 30-day access token.
+- **Don't store sensitive data in claims.** They're readable; only signed.
+- **Pick `alg` server-side.** Reject the `none` algorithm and any client-chosen `alg`.
+- **Have a revocation story** — a deny-list keyed by `jti`, or short TTLs that you accept.
+</Callout>
+
+## OAuth2: delegating access to a third party
+
+When a *user* wants to let an app (Slack, Notion, your bot) act on their behalf at another
+service (Google, GitHub) — without giving up their password — that's OAuth2.
+
+The flow you should know by heart is **Authorization Code with PKCE**:
+
+<SequenceDiagram
+  actors={['App', 'User', 'Provider']}
+  steps={[
+    { from: 'App', to: 'User', label: 'Redirect to provider w/ PKCE challenge' },
+    { from: 'User', to: 'Provider', label: 'Login + consent' },
+    { from: 'Provider', to: 'User', label: 'Redirect back to app w/ code' },
+    { from: 'User', to: 'App', label: 'Code arrives in callback URL' },
+    { from: 'App', to: 'Provider', label: 'POST /token (code + PKCE verifier)' },
+    { from: 'Provider', to: 'App', label: 'access_token + refresh_token' },
+    { from: 'App', to: 'Provider', label: 'API calls w/ Bearer access_token' },
+  ]}
+/>
+
+Other grant types exist (`client_credentials` for machine-to-machine, `device_code` for
+TVs, etc.) — learn them when you need them. **Avoid implicit and password grants**, both
+are deprecated for good reasons.
+
+## Sessions are still fine
+
+For server-rendered web apps that own their frontend, plain **session cookies** beat JWTs:
+they're easy to revoke, the browser handles them, and `HttpOnly` + `Secure` + `SameSite`
+defends against the common attacks. Use JWTs when you genuinely need stateless verification
+across services.
+
+<KeyTakeaways
+  items={[
+    'API keys for machine-to-machine; never expose them to a browser.',
+    'JWTs are stateless and convenient, with revocation as the main pitfall.',
+    'Use OAuth2 (Authorization Code + PKCE) for third-party delegation.',
+    'Session cookies are still the simplest correct answer for many web apps.',
+    'Authentication and authorization are different problems — keep them separate.',
+  ]}
+/>

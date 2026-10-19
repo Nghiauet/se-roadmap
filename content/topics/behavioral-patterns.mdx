@@ -1,0 +1,217 @@
+<Lead>
+Behavioral patterns describe how objects *talk*. Three of them — Observer, Strategy, and
+Chain of Responsibility — quietly run almost every production system you'll touch. Learn
+to spot them and you can rename half the code you've already written.
+</Lead>
+
+## The big idea
+
+These three are the workhorses:
+
+<BoxFlow
+  nodes={[
+    { label: 'Observer', detail: 'broadcast to listeners', tone: 'primary' },
+    { label: 'Strategy', detail: 'swap an algorithm', tone: 'success' },
+    { label: 'Chain of responsibility', detail: 'pipeline of handlers', tone: 'warn' },
+  ]}
+/>
+
+## Observer — pub/sub at the object level
+
+One subject, many observers. The subject doesn't know who is listening; observers
+subscribe and react.
+
+<CodeTabs>
+  <CodeTab lang="ts">
+    ```ts
+    type Listener<T> = (event: T) => void;
+
+    class EventBus<T> {
+      private listeners = new Set<Listener<T>>();
+      on(fn: Listener<T>)  { this.listeners.add(fn);    return () => this.listeners.delete(fn); }
+      emit(event: T)       { for (const fn of this.listeners) fn(event); }
+    }
+
+    const bus = new EventBus<{ type: 'order.placed'; orderId: number }>();
+    bus.on(e => sendEmail(e.orderId));
+    bus.on(e => updateAnalytics(e));
+    bus.emit({ type: 'order.placed', orderId: 9001 });
+    ```
+  </CodeTab>
+  <CodeTab lang="python">
+    ```python
+    from typing import Callable, Generic, TypeVar
+    T = TypeVar("T")
+
+    class EventBus(Generic[T]):
+        def __init__(self) -> None:
+            self._listeners: set[Callable[[T], None]] = set()
+
+        def on(self, fn: Callable[[T], None]) -> Callable[[], None]:
+            self._listeners.add(fn)
+            return lambda: self._listeners.discard(fn)
+
+        def emit(self, event: T) -> None:
+            for fn in self._listeners:
+                fn(event)
+
+    bus: EventBus[dict] = EventBus()
+    bus.on(lambda e: send_email(e["order_id"]))
+    bus.on(lambda e: update_analytics(e))
+    bus.emit({"type": "order.placed", "order_id": 9001})
+    ```
+  </CodeTab>
+</CodeTabs>
+
+Every reactive UI framework (React, Vue, Svelte), every event-driven backend, every
+WebSocket client is Observer under the hood.
+
+<Callout tone="warn" title="Memory leaks live here">
+If observers don't unsubscribe, the subject keeps references and nothing gets garbage-
+collected. Return an `unsubscribe` function from `on(…)` and use it religiously.
+</Callout>
+
+## Strategy — swap an algorithm at runtime
+
+When the *what* is fixed but the *how* varies, parameterise the how.
+
+<CodeTabs>
+  <CodeTab lang="ts">
+    ```ts
+    interface SortStrategy<T> {
+      sort(items: T[]): T[];
+    }
+
+    class ByPrice implements SortStrategy<Item>  { sort(xs: Item[]) { return [...xs].sort((a,b) => a.price - b.price); } }
+    class ByPopularity implements SortStrategy<Item> { sort(xs: Item[]) { return [...xs].sort((a,b) => b.views - a.views); } }
+    class ByRelevance implements SortStrategy<Item>  { sort(xs: Item[]) { return mlRanked(xs); } }
+
+    function listResults(items: Item[], strategy: SortStrategy<Item>) {
+      return strategy.sort(items);
+    }
+    ```
+  </CodeTab>
+  <CodeTab lang="python">
+    ```python
+    from typing import Protocol, Generic, TypeVar
+    T = TypeVar("T")
+
+    class SortStrategy(Protocol, Generic[T]):
+        def sort(self, items: list[T]) -> list[T]: ...
+
+    class ByPrice:
+        def sort(self, xs): return sorted(xs, key=lambda x: x.price)
+    class ByPopularity:
+        def sort(self, xs): return sorted(xs, key=lambda x: -x.views)
+    class ByRelevance:
+        def sort(self, xs): return ml_ranked(xs)
+
+    def list_results(items: list[Item], strategy: SortStrategy[Item]) -> list[Item]:
+        return strategy.sort(items)
+    ```
+  </CodeTab>
+</CodeTabs>
+
+The strategy is often **just a function**, no class:
+
+<CodeTabs>
+  <CodeTab lang="ts">
+    ```ts
+    type SortFn = (a: Item, b: Item) => number;
+    const byPrice: SortFn = (a, b) => a.price - b.price;
+    items.sort(byPrice);
+    ```
+  </CodeTab>
+  <CodeTab lang="python">
+    ```python
+    by_price = lambda x: x.price
+    items.sort(key=by_price)
+    ```
+  </CodeTab>
+</CodeTabs>
+
+Same pattern, less ceremony.
+
+## Chain of Responsibility — pipelines of handlers
+
+A request passes through an ordered list of handlers. Each one decides to handle, modify,
+or pass along. Stop me if you've seen this:
+
+<CodeTabs>
+  <CodeTab lang="ts">
+    ```ts
+    type Handler = (req: Request, next: () => Promise<Response>) => Promise<Response>;
+
+    async function run(req: Request, handlers: Handler[]): Promise<Response> {
+      let i = -1;
+      const next = async () => {
+        i++;
+        if (i >= handlers.length) throw new Error('No handler completed');
+        return handlers[i](req, next);
+      };
+      return next();
+    }
+
+    const stack: Handler[] = [
+      async (req, next) => { log(req); return next(); },
+      async (req, next) => { authenticate(req); return next(); },
+      async (req, next) => { validate(req);     return next(); },
+      async (req)       => actualHandler(req),
+    ];
+
+    await run(incomingRequest, stack);
+    ```
+  </CodeTab>
+  <CodeTab lang="python">
+    ```python
+    from typing import Awaitable, Callable
+
+    Handler = Callable[[Request, Callable[[], Awaitable[Response]]], Awaitable[Response]]
+
+    async def run(req: Request, handlers: list[Handler]) -> Response:
+        i = -1
+        async def next_():
+            nonlocal i
+            i += 1
+            if i >= len(handlers):
+                raise RuntimeError("No handler completed")
+            return await handlers[i](req, next_)
+        return await next_()
+
+    async def logger(req, nxt):    log(req);          return await nxt()
+    async def auth(req, nxt):      authenticate(req); return await nxt()
+    async def validator(req, nxt): validate(req);     return await nxt()
+    async def terminal(req, nxt):  return await actual_handler(req)
+
+    await run(incoming_request, [logger, auth, validator, terminal])
+    ```
+  </CodeTab>
+</CodeTabs>
+
+Every web framework's middleware pipeline (`Express`, `Koa`, `FastAPI` dependencies,
+`NestJS` interceptors) is this pattern.
+
+## Other behavioral patterns to recognise
+
+<DefinitionList>
+  <Definition term="Command">An action wrapped as an object: lets you queue, undo, retry. Used in CQRS write models and editor undo stacks.</Definition>
+  <Definition term="State">An object's behaviour changes based on a state field. Useful when an `if` chain becomes a switch becomes a five-way nest.</Definition>
+  <Definition term="Iterator">Walk through a collection without exposing its shape. Languages give you this for free now.</Definition>
+  <Definition term="Template method">Define a skeleton with override hooks. Common in inheritance hierarchies — used less in modern composition-first code.</Definition>
+</DefinitionList>
+
+## In practice
+
+You're not going to look up "is this Strategy or Observer?" mid-implementation. But when
+you see ten classes that all wire callbacks the same way, naming it "Observer" lets you
+have a one-sentence conversation about it. That's the value of the vocabulary.
+
+<KeyTakeaways
+  items={[
+    'Observer is pub/sub at the object level — always have an unsubscribe story.',
+    'Strategy swaps an algorithm; in TypeScript a plain function often suffices.',
+    'Chain of Responsibility is the engine inside every middleware stack.',
+    'Command, State, Iterator show up less but explain a lot of legacy code.',
+    'The patterns are vocabulary for the conversations, not blueprints for new code.',
+  ]}
+/>

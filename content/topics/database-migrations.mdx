@@ -1,0 +1,166 @@
+<Lead>
+Schema changes are the riskiest deploys you'll ever do — they're stateful, often
+non-reversible, and a bad one takes down writes. The "expand and contract" pattern, and
+a discipline of never combining a column rename with a code change, eliminate 90% of the
+risk.
+</Lead>
+
+## The big idea
+
+Run migrations **separately** from app deploys, and never let one deploy require *both*
+old and new code paths to read or write incompatible schemas. The expand-and-contract
+pattern formalises this.
+
+<BoxFlow
+  direction="vertical"
+  nodes={[
+    { label: '1. Expand', detail: 'add new column / table — old code still works', tone: 'success' },
+    { label: '2. Dual-write', detail: 'new code writes both old + new — both readable', tone: 'primary' },
+    { label: '3. Backfill', detail: 'fill the new column for existing rows', tone: 'warn' },
+    { label: '4. Migrate reads', detail: 'switch readers to the new column', tone: 'primary' },
+    { label: '5. Contract', detail: 'drop the old column', tone: 'muted' },
+  ]}
+/>
+
+## Why one-shot migrations break
+
+A "rename `username` to `handle`" deploy looks innocent. In production:
+
+<Steps>
+  <Step title="The migration runs at deploy time">
+    Renames the column.
+  </Step>
+  <Step title="Old app instances still running">
+    They query `SELECT username FROM users` and crash.
+  </Step>
+  <Step title="New instances expect handle">
+    They query `SELECT handle FROM users` and work — until they hit a request that was
+    routed mid-rollout.
+  </Step>
+  <Step title="Rolling back is impossible">
+    The old column doesn't exist anymore. The old app version can't run.
+  </Step>
+</Steps>
+
+## The same change, done safely
+
+<Steps>
+  <Step title="Deploy 1 — expand">
+    Migration: `ALTER TABLE users ADD COLUMN handle TEXT;`
+    Code: still reads/writes `username`. No risk.
+  </Step>
+  <Step title="Deploy 2 — dual-write">
+    Code: writes both `username` and `handle`. Reads `username`. Both columns track.
+  </Step>
+  <Step title="Backfill">
+    Batched job: `UPDATE users SET handle = username WHERE handle IS NULL`. Run in
+    chunks of 10k so locks don't pile up.
+  </Step>
+  <Step title="Deploy 3 — migrate reads">
+    Code: writes both, reads `handle`. Verify in production.
+  </Step>
+  <Step title="Deploy 4 — contract">
+    Code: writes only `handle`. Migration: `ALTER TABLE users DROP COLUMN username;`
+  </Step>
+</Steps>
+
+Five steps, four deploys. Slow — and *safe*. Every step is independently revertible.
+
+## What's risky in a migration
+
+<StatusGrid
+  items={[
+    { code: 'ADD COL', label: 'Add column NULL', detail: 'Cheap on Postgres. Fast.', tone: 'success' },
+    { code: 'ADD COL NOT NULL', label: 'With default on big table', detail: 'Postgres 11+: instant. Older: full table rewrite.', tone: 'warn' },
+    { code: 'ADD INDEX', label: 'Create index', detail: 'Use CONCURRENTLY in Postgres — otherwise blocks writes.', tone: 'warn' },
+    { code: 'DROP COL', label: 'Drop column', detail: 'Metadata-only in Postgres. Fast. (But your *code* must already stop using it.)', tone: 'success' },
+    { code: 'RENAME', label: 'Rename column / table', detail: 'Cheap in the DB; deadly without expand-and-contract.', tone: 'error' },
+    { code: 'BACKFILL', label: 'UPDATE large table', detail: 'Locks rows, bloats WAL. Batch in 1–10k chunks with sleeps.', tone: 'warn' },
+  ]}
+/>
+
+## Tool choice
+
+The standard tools enforce ordering and history:
+
+<DefinitionList>
+  <Definition term="Alembic (SQLAlchemy)">Python; revision graph; `upgrade` and `downgrade`.</Definition>
+  <Definition term="Prisma Migrate">TypeScript; schema-first; generates SQL.</Definition>
+  <Definition term="Flyway / Liquibase">JVM; simple, battle-tested SQL-file approach.</Definition>
+  <Definition term="goose / sqlx">Go; lightweight, SQL-file or Go-function migrations.</Definition>
+  <Definition term="Rails migrations">Active Record's; one of the originals.</Definition>
+</DefinitionList>
+
+All of them:
+- Write a `schema_migrations` table tracking which migrations have run.
+- Order migrations by timestamp or version.
+- Refuse to run the same migration twice.
+
+<CodeTabs>
+  <CodeTab lang="ts">
+    ```ts
+    // Knex example: add the new column (expand)
+    export async function up(knex: Knex) {
+      await knex.schema.alterTable('users', (t) => {
+        t.text('handle').nullable();
+      });
+    }
+
+    export async function down(knex: Knex) {
+      await knex.schema.alterTable('users', (t) => {
+        t.dropColumn('handle');
+      });
+    }
+    ```
+  </CodeTab>
+  <CodeTab lang="python">
+    ```python
+    # Alembic example: add the new column (expand)
+    def upgrade():
+        op.add_column('users', sa.Column('handle', sa.Text(), nullable=True))
+
+    def downgrade():
+        op.drop_column('users', 'handle')
+    ```
+  </CodeTab>
+</CodeTabs>
+
+## Backfills
+
+A migration that touches every row in a 50M-row table will lock everything for minutes.
+Don't do it in one statement.
+
+```sql
+-- Bad: one giant transaction
+UPDATE users SET handle = username WHERE handle IS NULL;
+
+-- Good: bite-sized batches via a job
+WITH batch AS (
+  SELECT id FROM users WHERE handle IS NULL LIMIT 5000 FOR UPDATE SKIP LOCKED
+)
+UPDATE users u SET handle = u.username FROM batch WHERE u.id = batch.id;
+-- run this loop until 0 rows affected, sleeping 100ms between batches
+```
+
+<Callout tone="warn" title="Indexes too">
+`CREATE INDEX` blocks writes in Postgres unless you use `CREATE INDEX CONCURRENTLY`.
+Use the concurrent form in production. It's slower and can't run in a transaction, but
+your service keeps serving.
+</Callout>
+
+## In practice
+
+The discipline: **schema changes deploy alone**, code reads new columns only after a
+backfill, drops happen in their own deploy after a wait period. Tooling like
+`strong_migrations` (Ruby) and `squawk` (Postgres SQL linter) automatically catches the
+dangerous patterns.
+
+<KeyTakeaways
+  items={[
+    'Migrations are stateful and often non-reversible — treat them as the riskiest deploys.',
+    "Use expand-and-contract: add, dual-write, backfill, migrate reads, drop.",
+    "Never combine a rename with a code change in a single deploy.",
+    "Backfill in chunks; use `CREATE INDEX CONCURRENTLY` for indexes.",
+    "Pick a migration tool with a schema_migrations table; never edit history once a migration has run in prod.",
+  ]}
+/>

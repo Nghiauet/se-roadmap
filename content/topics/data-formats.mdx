@@ -1,0 +1,148 @@
+<Lead>
+The wire format is a contract between systems that may never meet. JSON wins on
+ubiquity; XML is legacy; Protobuf wins on size and schema. The interesting question is
+which one *forces* a schema — because the bug you don't have is the one a schema catches at
+build time, not 3 a.m. in production.
+</Lead>
+
+## The big idea
+
+You are always making two choices at once: **how the data is encoded** (text vs binary) and
+**how the shape is described** (informal vs schema-first). JSON without a schema is fast to
+ship and slow to maintain. Protobuf with a `.proto` file is slow to start and a joy at scale.
+
+<Comparison
+  leftTitle="JSON"
+  rightTitle="Protobuf"
+  rows={[
+    { attribute: 'Encoding', left: 'UTF-8 text', right: 'Compact binary' },
+    { attribute: 'Schema', left: 'Optional (JSON Schema)', right: 'Required (`.proto`)' },
+    { attribute: 'Readable on the wire', left: 'Yes', right: 'No (need the schema)' },
+    { attribute: 'Size', left: 'Baseline', right: '~30–50% smaller for the same payload' },
+    { attribute: 'Tooling', left: 'Universal', right: 'Generated stubs per language' },
+    { attribute: 'Best fit', left: 'Public APIs, browser, debugging', right: 'Internal service-to-service, high throughput' },
+  ]}
+/>
+
+## JSON — the lingua franca
+
+Almost everything starts here. Six types, no comments, strict syntax, no schema. Easy in,
+easy to drift.
+
+```json
+{
+  "id": 42,
+  "email": "ada@example.com",
+  "is_active": true,
+  "tags": ["beta", "early_adopter"],
+  "metadata": null
+}
+```
+
+<Callout tone="warn" title="JSON's silent traps">
+- Numbers are IEEE 754 doubles — IDs over 2<sup>53</sup> lose precision. Send big IDs as strings.
+- There's no native date type. Pick **RFC 3339** strings (`2025-11-12T08:00:00Z`) and stick with them.
+- `null` vs missing keys is API design — decide your convention and document it.
+</Callout>
+
+## Schemas: catch the bug before the deploy
+
+A schema turns "I'll just trust the docs" into "the build fails if the docs lie." Use one.
+Two examples — same shape, two different mental models.
+
+<CodeTabs>
+  <CodeTab lang="ts">
+    ```ts
+    import { z } from 'zod';
+
+    const Order = z.object({
+      id: z.number().int().positive(),
+      status: z.enum(['new', 'paid', 'shipped', 'cancelled']),
+      items: z.array(
+        z.object({ sku: z.string(), quantity: z.number().int().min(1) }),
+      ).min(1),
+      paid_at: z.string().datetime().nullable(),
+    });
+
+    type Order = z.infer<typeof Order>;        // free TS type
+    Order.parse(unknownPayload);                // throws on bad input
+    ```
+  </CodeTab>
+  <CodeTab lang="python">
+    ```python
+    from datetime import datetime
+    from typing import Literal
+    from pydantic import BaseModel, Field, PositiveInt, conlist
+
+    class Item(BaseModel):
+        sku: str
+        quantity: PositiveInt
+
+    class Order(BaseModel):
+        id: PositiveInt
+        status: Literal["new", "paid", "shipped", "cancelled"]
+        items: conlist(Item, min_length=1)
+        paid_at: datetime | None
+
+    Order.model_validate(unknown_payload)        # raises on bad input
+    ```
+  </CodeTab>
+</CodeTabs>
+
+The same payload as a Protobuf message:
+
+```proto
+syntax = "proto3";
+
+message Order {
+  uint64 id = 1;
+  enum Status { NEW = 0; PAID = 1; SHIPPED = 2; CANCELLED = 3; }
+  Status status = 2;
+  repeated Item items = 3;
+  optional google.protobuf.Timestamp paid_at = 4;
+}
+
+message Item {
+  string sku = 1;
+  uint32 quantity = 2;
+}
+```
+
+<Callout tone="tip" title="Field numbers are forever">
+In Protobuf, the `= 1` / `= 2` numbers are part of the wire format. Reserve numbers you've
+deleted; never reuse them. This is exactly the rigour that lets old binaries read new
+messages without crashing.
+</Callout>
+
+## When XML still shows up
+
+You'll meet it in three places: legacy enterprise systems (SOAP, SAML), document-heavy
+formats (RSS, Atom, OPDS), and config (build tools, Microsoft anything). The pain points:
+attributes vs elements, namespaces, and that there is no canonical mapping to objects.
+Touch only when forced, and use a battle-tested library.
+
+## Other formats worth knowing exist
+
+<DefinitionList>
+  <Definition term="YAML">Human-friendly config; the spec is huge and has [footguns](https://yaml.org/spec/1.2.2/). Great for K8s manifests, bad for data interchange.</Definition>
+  <Definition term="TOML">Config without YAML's surprises; ideal for `pyproject.toml`-style settings.</Definition>
+  <Definition term="MessagePack / CBOR">Binary JSON-ish formats. Smaller than JSON, no schema.</Definition>
+  <Definition term="Avro">Schema-evolvable binary used heavily in Kafka pipelines.</Definition>
+  <Definition term="Cap'n Proto / FlatBuffers">Zero-copy binary formats for very hot paths.</Definition>
+</DefinitionList>
+
+## In practice
+
+For most app teams: **JSON on the edge, schema-validated, with a generated TS/Python type
+on each side**. Reach for Protobuf when the call is internal, high-volume, or needs strict
+backward compatibility (RPC, event buses). Avoid building your own format.
+
+<KeyTakeaways
+  items={[
+    'JSON is the default for breadth; Protobuf wins on size and schema discipline.',
+    'A schema (Zod, JSON Schema, Protobuf) catches contract drift at build time.',
+    'Send IDs as strings if they may exceed 2^53; standardise dates on RFC 3339.',
+    'XML survives in legacy spaces — use a real library, never hand-roll.',
+    'Pick formats by use case: edge vs internal, throughput, evolvability.',
+  ]}
+/>

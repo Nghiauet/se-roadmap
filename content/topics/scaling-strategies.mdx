@@ -1,0 +1,158 @@
+<Lead>
+"Vertical or horizontal" is shorthand for a deeper choice: do I throw a bigger machine at
+the problem, or change the design to share it across many small ones? The deeper choice
+shapes every other piece of your architecture.
+</Lead>
+
+## The big idea
+
+Two axes:
+
+<Comparison
+  leftTitle="Vertical (scale up)"
+  rightTitle="Horizontal (scale out)"
+  rows={[
+    { attribute: 'Action', left: 'Bigger box: more CPU, RAM, disk', right: 'More boxes; identical instances behind a load balancer' },
+    { attribute: 'Code change', left: 'None', right: 'Stateless services; shared session store' },
+    { attribute: 'Limit', left: 'The biggest box exists', right: 'Almost none for stateless tiers' },
+    { attribute: 'Cost', left: 'Cheap until it isn\'t', right: 'Linear-ish in compute' },
+    { attribute: 'Failure model', left: 'One machine = all your traffic', right: 'Lose one, the others keep running' },
+  ]}
+/>
+
+For nearly every modern app: vertical for the database, horizontal for everything else.
+
+## Make services stateless
+
+A stateless service stores **no per-user state in memory between requests**. Every
+request can be routed to any instance. That's the magic that makes horizontal scaling
+work.
+
+<Compare>
+  <Do>
+    Store session data in a shared cache (Redis), database, or signed cookie.
+    <CodeTabs>
+      <CodeTab lang="ts">
+        ```ts
+        const session = await redis.get(`session:${sid}`);
+        if (!session) return res.status(401).end();
+        ```
+      </CodeTab>
+      <CodeTab lang="python">
+        ```python
+        session = await redis.get(f"session:{sid}")
+        if session is None:
+            return Response(status_code=401)
+        ```
+      </CodeTab>
+    </CodeTabs>
+  </Do>
+  <Dont>
+    Keep user objects in a module-level `Map` on each instance.
+    <CodeTabs>
+      <CodeTab lang="ts">
+        ```ts
+        const sessions: Map<string, Session> = new Map();   // dies with the process
+        sessions.set(sid, session);
+        ```
+      </CodeTab>
+      <CodeTab lang="python">
+        ```python
+        sessions: dict[str, Session] = {}   # dies with the process
+        sessions[sid] = session
+        ```
+      </CodeTab>
+    </CodeTabs>
+  </Dont>
+</Compare>
+
+## Connection pooling
+
+Each app instance opens DB connections; if 50 instances each open 100 connections, that's
+5,000 connections — far more than Postgres can handle. Pool inside each instance, and use
+**a connection pooler** (PgBouncer, RDS Proxy) in front of the database.
+
+<BoxFlow
+  nodes={[
+    { label: '50× app pods', detail: 'pool=10 each', tone: 'primary' },
+    { label: 'PgBouncer', detail: 'multiplexes 500→50', tone: 'warn' },
+    { label: 'Postgres', detail: 'max_connections=100', tone: 'success' },
+  ]}
+/>
+
+## Scaling the database
+
+Stateful tiers are harder. The escalation:
+
+<Steps>
+  <Step title="Vertical first">
+    Bigger instance. Postgres on a 64-core box goes a long way.
+  </Step>
+  <Step title="Read replicas">
+    Reads go to replicas; writes still hit the primary. Watch for replication lag bugs.
+  </Step>
+  <Step title="Sharding / partitioning">
+    Split data across multiple primaries by some key (user_id, tenant_id). Now you have
+    a distributed system; the rules change.
+  </Step>
+  <Step title="Specialised stores">
+    Move hot workloads off: ElasticSearch for search, Redis for sessions, Kafka for
+    streams, ClickHouse for analytics.
+  </Step>
+</Steps>
+
+<Callout tone="warn" title="The replication lag trap">
+A user writes, immediately reads, and the read goes to a replica that hasn't caught up
+yet. They see the old data and reload thinking they're crazy. Fix: route reads of
+*just-written data* to the primary, or wait for replication to catch up before responding.
+</Callout>
+
+## Async over sync where you can
+
+Synchronous work limits throughput to the latency of the slowest dependency. Pushing
+slow work to a queue/worker frees the request path:
+
+<BoxFlow
+  nodes={[
+    { label: 'API', detail: 'returns 202', tone: 'primary' },
+    { label: 'Queue', tone: 'warn' },
+    { label: 'Worker pool', tone: 'success' },
+    { label: 'Persist + notify', tone: 'muted' },
+  ]}
+/>
+
+Order placed → return immediately, send the receipt email asynchronously. The user sees
+"order confirmed" in milliseconds; the email is queued for a worker.
+
+## Watch for hidden bottlenecks
+
+Even a stateless horizontal service still funnels through:
+
+<DefinitionList>
+  <Definition term="The database">Eventually you hit max connections or write throughput.</Definition>
+  <Definition term="Caches">Hot keys serialise on a single Redis instance.</Definition>
+  <Definition term="Locks">Anywhere `SELECT ... FOR UPDATE` happens, contention kills throughput.</Definition>
+  <Definition term="Third-party APIs">Their rate limit is your scaling ceiling.</Definition>
+</DefinitionList>
+
+## In practice
+
+Most teams scale prematurely. The right order:
+
+1. Profile the slow path.
+2. Add an index, cache the obvious answer, batch the N+1 queries.
+3. Add app instances (cheap, easy).
+4. *Then* consider read replicas, queues, sharding.
+
+By the time you're sharding the database, you should know the system intimately. If you
+don't, sharding will make things worse.
+
+<KeyTakeaways
+  items={[
+    "Vertical for the DB, horizontal for everything else.",
+    "Stateless services are a precondition for horizontal scale.",
+    "Connection pooling — both in-app and in front of the DB — keeps Postgres alive.",
+    "Push slow work to queues + workers; return fast.",
+    "Profile, index, cache before you shard. Most scaling work is engineering, not infra.",
+  ]}
+/>

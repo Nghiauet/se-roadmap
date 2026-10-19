@@ -1,0 +1,126 @@
+<Lead>
+REST isn't a spec — it's a discipline: model the world as **resources** addressed by URLs,
+manipulate them with a uniform set of HTTP verbs, keep the server stateless. Do this
+consistently and your API will feel obvious to people who have never seen it.
+</Lead>
+
+## The big idea
+
+A good REST API answers two questions the same way every time: "what is the thing?" and
+"what am I doing to it?". The first becomes a noun in the URL (`/orders/42`), the second
+becomes an HTTP method (`GET`, `POST`, `PUT`, `PATCH`, `DELETE`). If a developer can guess
+the URL for a resource they have never seen and be right, you have done it well.
+
+<BoxFlow
+  nodes={[
+    { label: 'List', detail: 'GET /orders', tone: 'primary' },
+    { label: 'Read', detail: 'GET /orders/42', tone: 'primary' },
+    { label: 'Create', detail: 'POST /orders', tone: 'success' },
+    { label: 'Update', detail: 'PUT/PATCH /orders/42', tone: 'warn' },
+    { label: 'Delete', detail: 'DELETE /orders/42', tone: 'muted' },
+  ]}
+/>
+
+## Designing resources, not actions
+
+Resources are **nouns**, never verbs. `POST /createOrder` is a smell. The interesting design
+work is choosing the right granularity and naming.
+
+<Compare>
+  <Do>
+    ```text
+    GET    /users/42/orders
+    POST   /users/42/orders
+    DELETE /users/42/orders/9001
+    ```
+    The resource is "orders belonging to user 42". Method picks the action.
+  </Do>
+  <Dont>
+    ```text
+    GET  /getUserOrders?id=42
+    POST /createOrderForUser
+    POST /deleteOrder?id=9001
+    ```
+    Verbs in the URL, IDs in query strings, `POST` doing everything.
+  </Dont>
+</Compare>
+
+## CRUD ↔ HTTP mapping
+
+The default mapping is unambiguous; deviate only when the protocol forces you.
+
+<Comparison
+  leftTitle="Operation"
+  rightTitle="HTTP"
+  rows={[
+    { attribute: 'Create one', left: 'POST /orders', right: '201 Created + Location header' },
+    { attribute: 'Read collection', left: 'GET /orders?page=1', right: '200 OK + array' },
+    { attribute: 'Read one', left: 'GET /orders/42', right: '200 OK + object · 404 if absent' },
+    { attribute: 'Replace one', left: 'PUT /orders/42', right: '200 / 204 — full body required' },
+    { attribute: 'Patch one', left: 'PATCH /orders/42', right: '200 / 204 — partial body' },
+    { attribute: 'Delete one', left: 'DELETE /orders/42', right: '204 No Content' },
+  ]}
+/>
+
+<Callout tone="tip" title="When CRUD breaks down">
+Some operations don't fit (`POST /orders/42/cancel`, `POST /pipelines/9/runs`). That's OK —
+**model the action as its own resource** (a "cancel" or a "run") and keep `POST` for
+creation. The discipline isn't dogma; the goal is predictability.
+</Callout>
+
+## Pagination, filtering, sorting
+
+Lists grow unboundedly. Pick one convention up front and use it everywhere:
+
+```http
+GET /orders?status=paid&sort=-created_at&page=2&per_page=20
+```
+
+For high-volume APIs, prefer **cursor pagination** over offset (`?cursor=eyJpZCI6OTAwMX0`):
+offset gets slower as you go deeper and breaks on inserts.
+
+## Versioning
+
+You will get the model wrong. Plan for it: pick **one** versioning scheme and never mix.
+
+<DefinitionList>
+  <Definition term="URL path">`/v1/orders` — cache-friendly, easy to debug. Default for most public APIs.</Definition>
+  <Definition term="Header">`Accept: application/vnd.api+json;version=2` — keeps URLs stable but hides the version.</Definition>
+  <Definition term="Date">`2025-11-01` — Stripe's approach; rarely worth its complexity outside that scale.</Definition>
+</DefinitionList>
+
+## Error responses
+
+Use the right status family, and put the structured error in the body. Be consistent.
+
+```json
+{
+  "error": {
+    "code": "order.invalid_state",
+    "message": "Cannot cancel an order that has already shipped.",
+    "details": { "order_id": 9001, "current_state": "shipped" }
+  }
+}
+```
+
+<Callout tone="warn" title="The cardinal sin">
+`HTTP 200 OK` with `{"error": "..."}` in the body. Clients can't tell success from failure
+without parsing every response. Use the status code as the primary signal; the body adds
+detail.
+</Callout>
+
+## In practice
+
+Pick a stack with strong opinions (FastAPI, NestJS, .NET Minimal APIs) and let it enforce
+consistency — content negotiation, request validation, status codes, OpenAPI generation. The
+endpoints you hand-design will be a thin layer of routing on top.
+
+<KeyTakeaways
+  items={[
+    'Resources are nouns; HTTP methods supply the verbs. No `getX` in URLs.',
+    'Map CRUD onto HTTP with the default conventions; deviate only with reason.',
+    'Standardise pagination, filtering, and sorting across every list endpoint.',
+    'Choose one versioning scheme up front — URL path is the safe default.',
+    'Errors use the right status code; the body adds machine-readable detail.',
+  ]}
+/>

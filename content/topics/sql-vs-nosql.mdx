@@ -1,0 +1,128 @@
+<Lead>
+The choice isn't "SQL or NoSQL" — it's "which **shape** matches my access pattern?"
+Relational, document, key-value, and graph databases each excel at one access pattern and
+trip over the others. Pick by the queries you actually run.
+</Lead>
+
+## The big idea
+
+A database has two jobs: store your data and serve your reads. The shape that makes the
+*reads* easy decides the database.
+
+<BoxFlow
+  nodes={[
+    { label: 'Relational', detail: 'joins + flexible queries', tone: 'primary' },
+    { label: 'Document', detail: 'self-contained blobs', tone: 'success' },
+    { label: 'Key-value', detail: 'one key, fast lookup', tone: 'warn' },
+    { label: 'Graph', detail: 'multi-hop relationships', tone: 'muted' },
+  ]}
+/>
+
+## Relational (Postgres, MySQL, SQLite)
+
+Strict schema, normalised tables, SQL for flexible querying, ACID transactions. You **don't
+know up front** which queries you'll need? Use this. The cost is migrations when the
+schema changes and JOIN performance when tables get huge.
+
+```sql
+SELECT u.email, COUNT(o.id) AS orders
+  FROM users u
+  LEFT JOIN orders o ON o.user_id = u.id
+  WHERE u.signup_at > NOW() - INTERVAL '30 days'
+  GROUP BY u.id
+  ORDER BY orders DESC;
+```
+
+**Best for:** transactional systems, anything you might want to slice and dice ad-hoc.
+
+## Document (MongoDB, CouchDB, DynamoDB)
+
+Self-contained JSON-shaped documents in collections. No schema enforced; flexible writes;
+queries within a document are cheap, queries *across* documents are awkward.
+
+```json
+{
+  "_id": "ord_9001",
+  "user": { "id": 42, "email": "ada@example.com" },
+  "items": [
+    { "sku": "X1", "quantity": 2 },
+    { "sku": "Y2", "quantity": 1 }
+  ],
+  "status": "paid",
+  "paid_at": "2025-11-12T08:00:00Z"
+}
+```
+
+**Best for:** product catalogues, content management, anything aggregate-shaped where
+one document is read or written together.
+
+## Key-value (Redis, DynamoDB, etcd)
+
+You give it a key, it gives you back a value. That's the API. Insanely fast, but the *only*
+question you can ask is "what's stored under this key?"
+
+```bash
+SET   session:abc123  '{"user_id":42,"expires":1733000000}'  EX 3600
+GET   session:abc123
+INCR  rate:42:minute
+EXPIRE rate:42:minute 60
+```
+
+**Best for:** sessions, caches, rate-limit counters, leaderboards, anywhere lookup-by-id
+dominates.
+
+## Graph (Neo4j, Memgraph, ArangoDB)
+
+Nodes and edges, queryable by *traversal*. The query language asks "from this node, walk
+N hops and tell me what you find."
+
+```cypher
+MATCH (me:User {id: 42})-[:FRIEND*1..3]-(friend:User)-[:LIKES]->(movie:Movie)
+WHERE NOT (me)-[:WATCHED]->(movie)
+RETURN movie.title, COUNT(*) AS friends_who_liked
+ORDER BY friends_who_liked DESC
+LIMIT 10;
+```
+
+**Best for:** social networks, fraud detection, knowledge graphs, recommendation systems —
+anywhere "who connects to whom via what" is the question.
+
+## Side-by-side
+
+<Comparison
+  leftTitle="SQL (relational)"
+  rightTitle="NoSQL (document/KV/graph)"
+  rows={[
+    { attribute: 'Schema', left: 'Enforced upfront', right: 'Flexible / per-document' },
+    { attribute: 'Joins', left: 'First-class', right: 'Application-side or denormalised' },
+    { attribute: 'Ad-hoc query', left: 'Strong', right: 'Limited (depends on index)' },
+    { attribute: 'Horizontal scale', left: 'Harder (sharding/partitioning)', right: 'Built-in for many' },
+    { attribute: 'Transactions', left: 'Multi-row ACID', right: 'Often single-row / single-doc' },
+    { attribute: 'When to pick', left: "Don't know your queries yet", right: 'Know the access pattern; need scale or shape' },
+  ]}
+/>
+
+<Callout tone="tip" title="Postgres is the boring default">
+Postgres covers SQL, JSON-document (`jsonb` columns), key-value (extensions), full-text
+search, geographic queries, even some graph-ish workloads. For most apps under "very
+large," picking it removes the SQL-vs-NoSQL decision until you have evidence you need
+something specialised.
+</Callout>
+
+## In practice
+
+The biggest mistake is using a NoSQL store because it's "fast" without knowing which
+access pattern. The second biggest is sticking with Postgres at the scale where a
+specialised store would be 10× simpler. You only learn which is which by watching real
+traffic.
+
+<KeyTakeaways
+  items={[
+    'Pick a database by the *shape* of your queries, not by hype.',
+    'Relational excels when queries are flexible and joins are common.',
+    'Document fits aggregates read or written together as one unit.',
+    'Key-value gives you raw speed for "fetch by id" access patterns.',
+    'Graph wins for multi-hop relationship traversal.',
+    'Postgres is the safe default for "I don\'t know yet."',
+  ]}
+/>

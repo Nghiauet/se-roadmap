@@ -1,0 +1,124 @@
+<Lead>
+Microservices solve **organisational** problems, not technical ones. Splitting a service
+costs you transactions, atomicity, and easy debugging. You should only pay that cost
+when you're getting team-scaling or independent-deploy benefits in return. The modular
+monolith is the right answer for years.
+</Lead>
+
+## The big idea
+
+The "monolith vs microservices" axis is really two axes:
+
+<Comparison
+  leftTitle="Code organisation"
+  rightTitle="Deployment unit"
+  rows={[
+    { attribute: 'Big ball of mud', left: 'No modules', right: 'One process' },
+    { attribute: 'Modular monolith', left: 'Strict module boundaries', right: 'One process' },
+    { attribute: 'Microservices', left: 'Strict module boundaries', right: 'Many processes, independent deploys' },
+  ]}
+/>
+
+The interesting move is from **big ball of mud → modular monolith**. Splitting into
+processes is the *second* step — only when modular boundaries aren't enough.
+
+## What microservices actually buy you
+
+<Steps>
+  <Step title="Independent deployability">
+    Team A ships without waiting for Team B's release branch.
+  </Step>
+  <Step title="Independent scaling">
+    The image-resizer needs 50 instances; the auth service needs 3.
+  </Step>
+  <Step title="Technology heterogeneity">
+    The new ML service can be Python while everything else is Go.
+  </Step>
+  <Step title="Failure isolation">
+    A bug in the recommendation engine doesn't take down checkout.
+  </Step>
+</Steps>
+
+All four are mostly **about teams**. If you're one team of five, you're paying the cost
+without getting the benefit.
+
+## What you pay for
+
+Microservices replace function calls with network calls. The bill:
+
+<DefinitionList>
+  <Definition term="Distributed transactions">Two services, one user action. No global commit. You need sagas or careful eventual consistency.</Definition>
+  <Definition term="Network failure">Calls timeout, fail, retry. Every boundary gains circuit breakers and idempotency keys.</Definition>
+  <Definition term="Observability">"What happened in this request?" becomes correlating across N services. Distributed tracing is non-negotiable.</Definition>
+  <Definition term="Operational overhead">N services × M environments = service catalogue, dashboards, CI/CD pipelines, on-call rotations.</Definition>
+  <Definition term="Local dev">Running 30 services on a laptop is its own engineering project.</Definition>
+</DefinitionList>
+
+## The modular monolith — the middle ground
+
+A single process, but with **enforced module boundaries**: each module exposes only its
+public API (interfaces, ports), persists into its own schema/tables, owns its tests.
+Inter-module calls go through those public APIs only.
+
+<BoxFlow
+  nodes={[
+    { label: 'API layer', detail: 'HTTP handlers', tone: 'muted' },
+    { label: 'Orders module', detail: 'public API', tone: 'primary' },
+    { label: 'Payments module', detail: 'public API', tone: 'success' },
+    { label: 'Inventory module', detail: 'public API', tone: 'warn' },
+  ]}
+/>
+
+Why this is great:
+- **Atomic transactions across modules** are still trivial — same DB.
+- **Refactoring** is a compile-checked operation, not a contract negotiation.
+- **Easy to split later**: a clean module boundary becomes a service boundary on demand.
+
+## When to actually split
+
+Split a module out when you have **at least two** of these signals:
+
+- The module has its own scaling profile (10× or more different from the rest).
+- An independent team owns it and the shared-deploy cycle is friction.
+- It has a different technology fit (latency-sensitive ML, real-time streaming).
+- The bug-tolerance is different (this one *must* keep working).
+
+If you have only one of these, fix the underlying problem (separate the deploy pipeline,
+profile the hot path) before adding a network boundary.
+
+## A practical migration path
+
+<Steps>
+  <Step title="Find a seam in the monolith">
+    A module already loosely-coupled, used through a small interface.
+  </Step>
+  <Step title="Extract a private API">
+    First in-process: replace direct DB access with calls to a module facade.
+  </Step>
+  <Step title="Move the data">
+    Migrate that module's tables into its own schema; the facade now owns them.
+  </Step>
+  <Step title="Add the network hop">
+    Replace the in-process facade with an HTTP/gRPC client of the same shape; deploy the
+    new service.
+  </Step>
+  <Step title="Add the resilience plumbing">
+    Timeouts, retries, circuit breaker, tracing — for this one call.
+  </Step>
+</Steps>
+
+## In practice
+
+The teams that succeed with microservices usually went through years of modular monolith
+first. The teams that fail with microservices usually skipped that step. **Start with a
+modular monolith; split when the pain forces you.**
+
+<KeyTakeaways
+  items={[
+    'Microservices solve team-scaling problems, not technical ones.',
+    'A modular monolith captures most of the benefits without the network cost.',
+    "Splitting trades simple function calls for distributed transactions, observability, ops overhead.",
+    'Split a module only when at least two of: independent scaling, team ownership, tech fit, blast-radius reasons apply.',
+    "Migrate gradually: extract a facade, move the data, then make it remote.",
+  ]}
+/>

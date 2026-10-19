@@ -1,0 +1,184 @@
+<Lead>
+Real-time chat surfaces every hard distributed-systems topic: stateful connections,
+presence, ordering, delivery guarantees, mobile push, fan-out. It's the perfect second
+system-design exercise after the URL shortener.
+</Lead>
+
+## The big idea
+
+You're solving four sub-problems at once:
+
+<BoxFlow
+  nodes={[
+    { label: 'Long-lived connections', detail: 'WebSocket', tone: 'primary' },
+    { label: 'Message routing', detail: 'pub/sub', tone: 'success' },
+    { label: 'Storage', detail: 'history + offline', tone: 'warn' },
+    { label: 'Fan-out', detail: 'to N devices', tone: 'muted' },
+  ]}
+/>
+
+## High-level architecture
+
+```text
+┌──────────┐     ┌─────────┐     ┌────────────┐     ┌──────────┐
+│ Client   │ ⇄ WS │ Edge    │ ⇄  │ Chat svc   │ ⇄  │ Storage  │
+│ apps     │     │ servers │ pub-sub  (stateless) │     │ (DB+blob)│
+└──────────┘     └─────────┘     └────────────┘     └──────────┘
+                       ▲
+                       │ push notifications
+                       ▼
+                 ┌───────────────┐
+                 │ APNs / FCM    │
+                 └───────────────┘
+```
+
+## Connections: WebSocket or SSE
+
+Long-lived bidirectional streams are how messages reach clients in milliseconds.
+
+<Comparison
+  leftTitle="WebSocket"
+  rightTitle="Server-Sent Events"
+  rows={[
+    { attribute: 'Direction', left: 'Bidirectional', right: 'Server → client only' },
+    { attribute: 'Browser support', left: 'Universal', right: 'Universal (auto-reconnect built in)' },
+    { attribute: 'Cost', left: 'Slightly higher', right: 'Lower (plain HTTP)' },
+    { attribute: 'Best for', left: 'Chat, collaboration', right: 'Notifications, dashboards' },
+  ]}
+/>
+
+Chat = WebSocket. Each connected device opens one. **The connection is stateful** — a
+server that holds the connection must know which channels the user is subscribed to.
+
+## Sharding the connection layer
+
+Millions of concurrent WebSockets don't fit on one box. Shard the connection layer:
+
+<Steps>
+  <Step title="Route by user ID">
+    User 42's connection lives on shard `hash(42) % N`. The same user on two devices
+    can be on the same shard (easy fan-out) or different (better load balance).
+  </Step>
+  <Step title="Track which shard hosts which user">
+    A "presence service" (Redis) stores `user_id → shard_id`.
+  </Step>
+  <Step title="Use a message bus between shards">
+    A message to a room with users on three shards is published once; each shard receives
+    it from the bus and pushes to its local connections.
+  </Step>
+</Steps>
+
+## Message flow — one-to-one
+
+<SequenceDiagram
+  actors={['Alice', 'Chat svc', 'DB', 'Bob']}
+  steps={[
+    { from: 'Alice', to: 'Chat svc', label: 'send(to=Bob, text=hi)' },
+    { from: 'Chat svc', to: 'DB', label: 'persist', detail: 'assign monotonic seq number' },
+    { from: 'Chat svc', to: 'Alice', label: 'ack(seq=99)' },
+    { from: 'Chat svc', to: 'Bob', label: 'push(seq=99)', detail: 'via WebSocket on Bob\'s shard' },
+  ]}
+/>
+
+The **acknowledgement** lets Alice's UI mark the message as sent. The **server-assigned
+sequence number** makes ordering and dedupe possible.
+
+## Group chats: the fan-out problem
+
+A message to a 200-member channel must reach all 200. The trade-off:
+
+<Compare>
+  <Do title="Write fan-out">
+    Persist one row per recipient at send time. Reads are fast (just my mailbox). Used
+    by Twitter for tweets — favours read latency at the cost of write amplification.
+  </Do>
+  <Do title="Read fan-out">
+    Persist one row in the channel; each reader scans the channel on read. Used for
+    large public chats — favours write efficiency at the cost of read complexity.
+  </Do>
+</Compare>
+
+Slack, Discord etc. use a hybrid: write fan-out into recipient timelines for small
+channels, read fan-out (with caching) for huge ones.
+
+## Storage
+
+```sql
+CREATE TABLE channels (
+  id           BIGSERIAL PRIMARY KEY,
+  kind         TEXT NOT NULL,                  -- 'dm' | 'group'
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE channel_members (
+  channel_id   BIGINT NOT NULL REFERENCES channels(id),
+  user_id      BIGINT NOT NULL,
+  joined_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_read_seq BIGINT NOT NULL DEFAULT 0,
+  PRIMARY KEY (channel_id, user_id)
+);
+
+CREATE TABLE messages (
+  channel_id   BIGINT NOT NULL,
+  seq          BIGINT NOT NULL,                -- monotonic per channel
+  sender_id    BIGINT NOT NULL,
+  text         TEXT,
+  attachments  JSONB,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (channel_id, seq)
+);
+```
+
+`last_read_seq` per member powers unread badges with one row read per channel.
+
+## Presence
+
+"Is Bob online?" sounds simple, isn't.
+
+<DefinitionList>
+  <Definition term="Naive">Heartbeat every 10s to a Redis key with TTL=30s. Works for thousands of users.</Definition>
+  <Definition term="At scale">Connection layer publishes "user X connected/disconnected" events; an aggregator de-dupes across devices. Final state goes in Redis or a presence-specific store.</Definition>
+  <Definition term="Privacy">Many users want to hide presence. Make it a setting and respect it.</Definition>
+</DefinitionList>
+
+## Delivery guarantees
+
+Three signals you want to send the user:
+
+- **Sent** — the server acked.
+- **Delivered** — the recipient's client received it (it sends an ack back).
+- **Read** — the recipient's UI displayed it (a separate event).
+
+The mechanics are similar — both delivered and read send a small `ack(seq)` event back
+through the system, persisted alongside the message.
+
+## Offline + push
+
+When a recipient is offline, the WebSocket can't deliver. Two paths:
+
+<Steps>
+  <Step title="Queue the message in their mailbox">
+    Wait for them to reconnect and replay.
+  </Step>
+  <Step title="Send a push notification">
+    Via APNs (iOS) or FCM (Android). The push wakes the app, which then connects and
+    replays from `last_read_seq + 1`.
+  </Step>
+</Steps>
+
+## In practice
+
+You'll never get this completely right on the first try. Build the simple version
+(single shard, one DB, in-process pub/sub) first; it'll handle thousands of concurrent
+users. The complexity above is for **after** you can prove you need it.
+
+<KeyTakeaways
+  items={[
+    'WebSocket for chat; SSE for one-way push.',
+    "Shard the stateful connection layer by user ID; use a message bus between shards.",
+    "Persist with a server-assigned monotonic seq for ordering, ack, and dedupe.",
+    "Group fan-out is a write-vs-read trade — hybrid in production.",
+    "Track `last_read_seq` per (channel, user) for unread state.",
+    "Offline users get queued messages + a push notification.",
+  ]}
+/>

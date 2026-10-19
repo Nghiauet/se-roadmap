@@ -1,0 +1,98 @@
+<Lead>
+Version control is the safety net for every serious codebase. Git lets you save small
+states, compare what changed, collaborate without overwriting people, and recover when a
+change goes sideways.
+</Lead>
+
+## The big idea
+
+Git is not just "upload code to GitHub." It is a local database of snapshots. Each commit
+points to the full project state, a parent commit, an author, and a message.
+
+<BoxFlow
+  nodes={[
+    { label: 'Working tree', detail: 'edited files', tone: 'muted' },
+    { label: 'Index', detail: 'staged changes', tone: 'primary' },
+    { label: 'Commit', detail: 'saved snapshot', tone: 'success' },
+    { label: 'Branch', detail: 'moving name', tone: 'default' },
+    { label: 'Remote', detail: 'shared copy', tone: 'default' },
+  ]}
+/>
+
+The most important mental model: a branch is just a name pointing at a commit. When you
+commit, the branch name moves forward.
+
+## Daily loop
+
+```bash
+git status
+git diff
+git add app/api/orders.ts
+git commit -m "Validate order payloads"
+git pull --rebase
+git push
+```
+
+Run `git status` before and after every risky command. It tells you which files are
+tracked, staged, modified, or untracked.
+
+## Merge, rebase, revert, reset
+
+<DefinitionList>
+  <Definition term="merge">Combine two branches with a merge commit. Good when history should show the join.</Definition>
+  <Definition term="rebase">Replay your commits on top of a newer base. Good for keeping a feature branch clean before review.</Definition>
+  <Definition term="revert">Create a new commit that undoes an old commit. Safe on shared branches.</Definition>
+  <Definition term="reset">Move a branch pointer. Powerful, but dangerous if the commits were already pushed.</Definition>
+</DefinitionList>
+
+The safe default on shared branches is **revert**, not reset. Rewriting published history
+surprises everyone else.
+
+## Pull requests are communication
+
+A good PR is not just a diff. It gives the reviewer context:
+
+- What changed and why.
+- What files or flows are most important.
+- How you tested it.
+- What trade-offs or follow-ups remain.
+
+Small PRs get better review. If a change touches routing, database, UI, and deployment in
+one diff, split it unless the behavior truly cannot be separated.
+
+## Recovery moves
+
+```bash
+# See recent branch movements, even after mistakes.
+git reflog
+
+# Move a file out of staging without losing edits.
+git restore --staged path/to/file.ts
+
+# Undo local edits in one file after checking they are disposable.
+git restore path/to/file.ts
+
+# Make a safe undo commit for something already pushed.
+git revert <commit-sha>
+```
+
+<Callout tone="warn" title="Do not panic-delete work">
+If you are confused, stop and run `git status`, `git diff`, and `git reflog`. Most "lost"
+work is still reachable for a while.
+</Callout>
+
+## In practice
+
+Practice Git on a throwaway repository: create branches, make conflicting edits, resolve a
+merge conflict, revert a commit, and recover a deleted branch from `git reflog`. You want
+these moves in muscle memory before a production incident.
+
+<KeyTakeaways
+  items={[
+    "Git is a local snapshot database; GitHub is only one remote host for it.",
+    "Commit small, coherent changes with messages that explain intent.",
+    "Use rebase to clean a private branch; use revert to undo shared history safely.",
+    "A pull request is a communication artifact, not only a code diff.",
+    "When something goes wrong, inspect first: `status`, `diff`, `log`, then `reflog`.",
+  ]}
+/>

@@ -1,0 +1,231 @@
+<Lead>
+Structural patterns describe how objects *compose*. They are the answer to "I have a thing
+that almost does what I need — how do I adapt, decorate, or front it without rewriting?"
+</Lead>
+
+## The big idea
+
+Structural patterns solve **interface mismatch**. You have an existing object and you
+need it to look or behave slightly differently — to fit a different interface, to gain a
+behaviour, to hide a complex subsystem. Each pattern attaches that change *outside* the
+original object so the original stays untouched.
+
+<BoxFlow
+  nodes={[
+    { label: 'Adapter', detail: 'translate interfaces', tone: 'primary' },
+    { label: 'Decorator', detail: 'wrap to add behaviour', tone: 'primary' },
+    { label: 'Facade', detail: 'simplify a complex API', tone: 'success' },
+    { label: 'Repository', detail: 'hide persistence', tone: 'warn' },
+  ]}
+/>
+
+## Repository — hide where data lives
+
+The repository wraps your data source (DB, API, file) behind an interface shaped around
+your domain — not around SQL.
+
+<CodeTabs>
+  <CodeTab lang="ts">
+    ```ts
+    interface UserRepository {
+      findById(id: number): Promise<User | null>;
+      save(user: User): Promise<void>;
+      search(q: string, page: number): Promise<User[]>;
+    }
+
+    // PG implementation
+    class PgUserRepository implements UserRepository { /* SQL inside */ }
+
+    // In-memory implementation for tests
+    class FakeUserRepository implements UserRepository { /* dict inside */ }
+    ```
+  </CodeTab>
+  <CodeTab lang="python">
+    ```python
+    from typing import Protocol
+
+    class UserRepository(Protocol):
+        async def find_by_id(self, id: int) -> User | None: ...
+        async def save(self, user: User) -> None: ...
+        async def search(self, q: str, page: int) -> list[User]: ...
+
+    # PG implementation
+    class PgUserRepository:  # SQL inside
+        ...
+
+    # In-memory implementation for tests
+    class FakeUserRepository:  # dict inside
+        ...
+    ```
+  </CodeTab>
+</CodeTabs>
+
+<Callout tone="tip" title="The real win">
+Tests run in milliseconds against `FakeUserRepository`; production swaps in `PgUserRepository`.
+Same code path, different implementation. This is also the boundary at which you can
+add caching, retries, or query logging without leaking those concerns into your domain.
+</Callout>
+
+## Adapter — make X look like Y
+
+You have a `LegacyPaymentClient` whose signature is wrong for your `Payment` interface.
+Wrap it.
+
+<CodeTabs>
+  <CodeTab lang="ts">
+    ```ts
+    interface Payment { charge(cents: number): Promise<void>; }
+
+    class LegacyPaymentClient {                          // can't change this
+      pay(amountDollars: number, currency: string) { /* … */ }
+    }
+
+    class LegacyPaymentAdapter implements Payment {
+      constructor(private readonly legacy: LegacyPaymentClient) {}
+      async charge(cents: number) {
+        this.legacy.pay(cents / 100, 'USD');
+      }
+    }
+    ```
+  </CodeTab>
+  <CodeTab lang="python">
+    ```python
+    from typing import Protocol
+
+    class Payment(Protocol):
+        async def charge(self, cents: int) -> None: ...
+
+    class LegacyPaymentClient:                           # can't change this
+        def pay(self, amount_dollars: float, currency: str) -> None: ...
+
+    class LegacyPaymentAdapter:
+        def __init__(self, legacy: LegacyPaymentClient) -> None:
+            self._legacy = legacy
+
+        async def charge(self, cents: int) -> None:
+            self._legacy.pay(cents / 100, "USD")
+    ```
+  </CodeTab>
+</CodeTabs>
+
+The rest of the system never sees the legacy client.
+
+## Decorator — wrap to add a capability
+
+Decorators wrap an object with the same interface, intercepting calls.
+
+<CodeTabs>
+  <CodeTab lang="ts">
+    ```ts
+    class CachingUserRepository implements UserRepository {
+      private cache = new Map<number, User>();
+      constructor(private readonly inner: UserRepository) {}
+
+      async findById(id: number) {
+        if (this.cache.has(id)) return this.cache.get(id)!;
+        const user = await this.inner.findById(id);
+        if (user) this.cache.set(id, user);
+        return user;
+      }
+      // pass-through for other methods
+      save(u: User)            { return this.inner.save(u); }
+      search(q: string, p: number) { return this.inner.search(q, p); }
+    }
+
+    const repo = new CachingUserRepository(new PgUserRepository());
+    ```
+  </CodeTab>
+  <CodeTab lang="python">
+    ```python
+    class CachingUserRepository:
+        def __init__(self, inner: UserRepository) -> None:
+            self._inner = inner
+            self._cache: dict[int, User] = {}
+
+        async def find_by_id(self, id: int) -> User | None:
+            if id in self._cache:
+                return self._cache[id]
+            user = await self._inner.find_by_id(id)
+            if user is not None:
+                self._cache[id] = user
+            return user
+
+        # pass-through for other methods
+        async def save(self, u: User):                  return await self._inner.save(u)
+        async def search(self, q: str, p: int):         return await self._inner.search(q, p)
+
+    repo = CachingUserRepository(PgUserRepository())
+    ```
+  </CodeTab>
+</CodeTabs>
+
+Stack decorators (logging + caching + retries) without touching the original class.
+
+## Facade — one front door to a complex subsystem
+
+When a job requires coordinating five clients, a facade hides the choreography:
+
+<CodeTabs>
+  <CodeTab lang="ts">
+    ```ts
+    class CheckoutFacade {
+      constructor(
+        private readonly orders: OrderService,
+        private readonly payments: PaymentService,
+        private readonly inventory: InventoryService,
+        private readonly notify: NotificationService,
+      ) {}
+
+      async checkout(cartId: number, paymentMethod: string) {
+        const order = await this.orders.draftFromCart(cartId);
+        await this.inventory.reserve(order);
+        await this.payments.charge(order.total, paymentMethod);
+        await this.orders.confirm(order.id);
+        await this.notify.emailReceipt(order);
+        return order;
+      }
+    }
+    ```
+  </CodeTab>
+  <CodeTab lang="python">
+    ```python
+    class CheckoutFacade:
+        def __init__(
+            self,
+            orders: OrderService,
+            payments: PaymentService,
+            inventory: InventoryService,
+            notify: NotificationService,
+        ) -> None:
+            self._orders, self._payments = orders, payments
+            self._inventory, self._notify = inventory, notify
+
+        async def checkout(self, cart_id: int, payment_method: str):
+            order = await self._orders.draft_from_cart(cart_id)
+            await self._inventory.reserve(order)
+            await self._payments.charge(order.total, payment_method)
+            await self._orders.confirm(order.id)
+            await self._notify.email_receipt(order)
+            return order
+    ```
+  </CodeTab>
+</CodeTabs>
+
+API gateways and BFFs (backend-for-frontend) are facades at a different scale.
+
+## In practice
+
+The structural pattern you will reach for most is **Repository + Decorator**: domain code
+calls a repository, and you stack decorators (cache, log, retry) around it. Adapter shows
+up at every system boundary you don't fully control. Facade is the cure for "this code
+calls eight clients and I can't read it."
+
+<KeyTakeaways
+  items={[
+    'Structural patterns solve interface mismatch — change the outside, not the inside.',
+    'Repository abstracts persistence; the tests-vs-production swap is the immediate win.',
+    'Adapter wraps a wrong-shape object to fit the interface you want.',
+    "Decorator stacks behaviour around an object that keeps the same interface.",
+    'Facade puts one front door on a complex subsystem; gateways are facades at scale.',
+  ]}
+/>

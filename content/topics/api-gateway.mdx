@@ -1,0 +1,149 @@
+<Lead>
+An API gateway is the single front door to a fleet of backend services. It routes,
+authenticates, rate-limits, transforms, and aggregates — so each backend can focus on its
+domain and clients only need to know one URL.
+</Lead>
+
+## The big idea
+
+Without a gateway, every client must know which service handles which call, and every
+service must implement its own auth, rate limiting, logging, and CORS. With one, those
+concerns live in one place.
+
+<BoxFlow
+  nodes={[
+    { label: 'Web + Mobile', tone: 'muted' },
+    { label: 'API gateway', detail: 'auth · rate · log · route', tone: 'primary' },
+    { label: 'Users svc', tone: 'success' },
+    { label: 'Orders svc', tone: 'success' },
+    { label: 'Search svc', tone: 'success' },
+  ]}
+/>
+
+## What a gateway actually does
+
+<Steps>
+  <Step title="Routing">
+    Map `/api/users/*` → users-svc, `/api/orders/*` → orders-svc. Path, host, header, or
+    method-based.
+  </Step>
+  <Step title="Authentication + authorization">
+    Verify the JWT or session, attach the user context, reject early on failure.
+  </Step>
+  <Step title="Rate limiting + quota">
+    By API key, by user, by endpoint. Reject before the backend wastes work.
+  </Step>
+  <Step title="Request / response transformation">
+    Add headers, strip internal-only fields, version-translate.
+  </Step>
+  <Step title="Aggregation / composition">
+    One client call fans out to N backend calls, response combined. Hides backend
+    granularity from clients.
+  </Step>
+  <Step title="Observability">
+    Centralised access logs, metrics, tracing entry point.
+  </Step>
+  <Step title="Resilience">
+    Retries, circuit breakers, fallback responses.
+  </Step>
+</Steps>
+
+## BFF — Backend for Frontend
+
+A specialised gateway per client type. The mobile app and the web app have different
+needs (payload size, screen-specific aggregations); a single "one-size-fits-all" gateway
+forces both clients to compromise.
+
+<BoxFlow
+  nodes={[
+    { label: 'Mobile app', tone: 'muted' },
+    { label: 'Mobile BFF', detail: 'lean payloads, batched', tone: 'primary' },
+    { label: 'Microservices', detail: 'shared backend pool', tone: 'success' },
+  ]}
+/>
+
+Each BFF is **owned by the frontend team** that uses it. That ownership is the whole
+point — frontend changes don't queue behind backend roadmaps.
+
+## Aggregation example
+
+Mobile screen needs: user profile, recent orders, recommended products. Three backend
+calls. Naive client: 3 round trips over mobile network. Gateway aggregation: 1 round
+trip.
+
+<CodeTabs>
+  <CodeTab lang="ts">
+    ```ts
+    // inside the gateway
+    app.get('/api/mobile/home', async (req, res) => {
+      const [user, orders, recs] = await Promise.all([
+        usersClient.get(req.user.id),
+        ordersClient.recent(req.user.id, 5),
+        recsClient.forUser(req.user.id),
+      ]);
+      res.json({ user, orders, recs });
+    });
+    ```
+  </CodeTab>
+  <CodeTab lang="python">
+    ```python
+    # inside the gateway (FastAPI)
+    @app.get("/api/mobile/home")
+    async def home(request: Request):
+        user, orders, recs = await asyncio.gather(
+            users_client.get(request.user.id),
+            orders_client.recent(request.user.id, 5),
+            recs_client.for_user(request.user.id),
+        )
+        return {"user": user, "orders": orders, "recs": recs}
+    ```
+  </CodeTab>
+</CodeTabs>
+
+<Callout tone="warn" title="The slowest call wins">
+`Promise.all` makes you fast — except the response is as slow as the slowest backend.
+Set timeouts on each upstream and consider returning partial responses (`recs` missing
+is okay, `user` missing is not).
+</Callout>
+
+## What to put in a gateway — and what not to
+
+<Compare>
+  <Do title="Belongs in the gateway">
+    Auth, rate limit, CORS, gzip, request logging, simple aggregation, header
+    transformation. Cross-cutting concerns that touch every service.
+  </Do>
+  <Dont title="Doesn't belong">
+    Business logic. The moment your gateway "approves an order" or "deducts inventory,"
+    you've built a distributed monolith — a gateway that requires deploying with the
+    backends. Keep behaviour in the owning service.
+  </Dont>
+</Compare>
+
+## Build vs buy
+
+You almost certainly should not build one from scratch. The mature options:
+
+<DefinitionList>
+  <Definition term="Cloud-managed">AWS API Gateway, Google Cloud Endpoints, Azure APIM. Zero ops, vendor-shaped.</Definition>
+  <Definition term="Open-source data plane">Envoy, NGINX, HAProxy. Fast L7 proxies; configuration is the hard part.</Definition>
+  <Definition term="Open-source full gateway">Kong, Tyk, Krakend, APISIX. Plugins, admin UIs, batteries included.</Definition>
+  <Definition term="Service mesh">Istio, Linkerd. East-west traffic + sidecar-based; can replace the gateway for internal calls.</Definition>
+</DefinitionList>
+
+## In practice
+
+The gateway is one of the highest-leverage components. Done well, it makes adding a new
+service trivial (declare a route, you're done). Done poorly, it becomes a fragile
+choke point: every team needs to coordinate gateway changes, deploys are scary, and the
+"add a new endpoint" ticket is open for two weeks.
+
+<KeyTakeaways
+  items={[
+    "An API gateway is the single front door for cross-cutting concerns — auth, rate limit, logging.",
+    "BFFs (one per client type) own client-shaped aggregation; the team that uses it owns it.",
+    "Aggregating backend calls in the gateway saves round trips for mobile clients.",
+    "Keep business logic *out* of the gateway; it belongs in the owning service.",
+    "Buy, don't build — mature managed and OSS gateways exist for a reason.",
+  ]}
+/>

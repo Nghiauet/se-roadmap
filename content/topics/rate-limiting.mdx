@@ -1,0 +1,165 @@
+<Lead>
+A public API without rate limiting is a public API waiting to be flooded. The skill is
+picking the right algorithm (token bucket is the most flexible), the right dimension to
+throttle on (user, key, IP), and the right error signal so clients can back off
+politely.
+</Lead>
+
+## The big idea
+
+Rate limiting answers two questions:
+
+<BoxFlow
+  nodes={[
+    { label: 'Who is it?', detail: 'identity dimension', tone: 'primary' },
+    { label: 'How fast are they going?', detail: 'rate algorithm', tone: 'success' },
+    { label: 'What do we do?', detail: 'reject, queue, slow', tone: 'warn' },
+  ]}
+/>
+
+## Pick the dimension
+
+Throttle on something **stable and meaningful**:
+
+<DefinitionList>
+  <Definition term="By user / API key">The most useful — protects your service and is fair to legitimate users sharing an IP.</Definition>
+  <Definition term="By IP">Crude; corporate NATs and shared mobile gateways look like one client.</Definition>
+  <Definition term="By endpoint">A separate budget for expensive endpoints (search, export) prevents one heavy call from starving the rest.</Definition>
+  <Definition term="Globally">A backstop for total system load (queue depth, CPU).</Definition>
+</DefinitionList>
+
+Usually you stack two: a generous per-user limit + a tighter per-endpoint one.
+
+## Algorithms
+
+<Comparison
+  leftTitle="Algorithm"
+  rightTitle="Behaviour"
+  rows={[
+    {
+      attribute: 'Fixed window',
+      left: '60 reqs per minute counted in clock-minute buckets.',
+      right: 'Trivial; allows 2× burst at minute boundaries.',
+    },
+    {
+      attribute: 'Sliding window',
+      left: 'Continuous "last 60 seconds" count.',
+      right: 'Smoother; needs more storage to track.',
+    },
+    {
+      attribute: 'Token bucket',
+      left: 'Bucket of N tokens; refill at R/s; each request takes one.',
+      right: 'Allows controlled bursts. The most common production choice.',
+    },
+    {
+      attribute: 'Leaky bucket',
+      left: 'Same as token bucket but in queue form — requests drain at fixed rate.',
+      right: 'Strict shaping; queues misbehaving clients.',
+    },
+  ]}
+/>
+
+## Token bucket in Redis
+
+The canonical implementation. Each user gets a bucket; refills happen lazily on each
+check.
+
+```lua
+-- Lua script — atomic in Redis
+local key = KEYS[1]
+local now      = tonumber(ARGV[1])
+local capacity = tonumber(ARGV[2])
+local refillPerSec = tonumber(ARGV[3])
+
+local data = redis.call('HMGET', key, 'tokens', 'updated')
+local tokens = tonumber(data[1]) or capacity
+local updated = tonumber(data[2]) or now
+
+local elapsed = math.max(0, now - updated)
+tokens = math.min(capacity, tokens + elapsed * refillPerSec)
+
+if tokens < 1 then
+  redis.call('HMSET', key, 'tokens', tokens, 'updated', now)
+  redis.call('EXPIRE', key, 60)
+  return 0                              -- rate-limited
+end
+
+tokens = tokens - 1
+redis.call('HMSET', key, 'tokens', tokens, 'updated', now)
+redis.call('EXPIRE', key, 60)
+return 1                                -- allowed
+```
+
+Call it on every request keyed by user/key/IP. The atomicity in Redis means you don't
+need a distributed lock.
+
+## What to return when you reject
+
+`429 Too Many Requests` with informative headers:
+
+```http
+HTTP/1.1 429 Too Many Requests
+Content-Type: application/json
+X-RateLimit-Limit: 100
+X-RateLimit-Remaining: 0
+X-RateLimit-Reset: 1733000060
+Retry-After: 30
+
+{
+  "error": {
+    "code": "rate_limited",
+    "message": "Too many requests. Retry in 30 seconds."
+  }
+}
+```
+
+The headers let well-behaved clients back off. The `Retry-After` header is honoured by
+many HTTP clients automatically.
+
+<Callout tone="tip" title="Two error codes, two failure modes">
+- **429** — you're going too fast, slow down.
+- **503** — the server is overloaded; everyone slow down.
+
+Both invite the same retry behaviour, but `503` is system-wide. Use it sparingly.
+</Callout>
+
+## Distributed limit, single counter
+
+A single counter on one Redis node is fine to hundreds of thousands of requests per
+second. For higher throughput, **shard the counter** by user ID or use a probabilistic
+algorithm. Trying to coordinate counters across nodes synchronously *defeats* the point.
+
+## Where to enforce
+
+<Steps>
+  <Step title="Edge / CDN">
+    Cheap blanket limits for crawlers, suspicious IPs. Cloudflare WAF, AWS WAF.
+  </Step>
+  <Step title="API gateway">
+    Per-API-key, per-endpoint limits — applies to all backends uniformly.
+  </Step>
+  <Step title="Application">
+    Domain-aware limits ("don't let one user create 1000 invoices in a minute").
+  </Step>
+  <Step title="Downstream / DB">
+    Connection pool limits, query timeouts — the last line of defence.
+  </Step>
+</Steps>
+
+## In practice
+
+The hardest part isn't the algorithm; it's choosing limits that are tight enough to
+protect the service but loose enough that legitimate bursts (a deploy, a marketing
+spike) don't break. Start permissive, watch the 99th percentile, tighten gradually. And
+ship the limit *with* the documentation that explains it — a 429 with no docs is just a
+frustration.
+
+<KeyTakeaways
+  items={[
+    "Throttle by stable identity (user, API key) before IP.",
+    "Token bucket is the most flexible algorithm; implement atomically in Redis.",
+    "Return 429 with `X-RateLimit-*` and `Retry-After` headers — clients can back off.",
+    "Stack limits: edge, gateway, app, DB. Each catches a different failure mode.",
+    "Choose limits empirically; document them; don't surprise legitimate users.",
+  ]}
+/>

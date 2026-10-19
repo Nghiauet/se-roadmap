@@ -1,0 +1,140 @@
+<Lead>
+You cannot fix what you cannot see. Observability is the discipline of leaving enough
+breadcrumbs in production that you can answer questions you didn't anticipate. Three
+signals — logs, metrics, traces — each answer a different question.
+</Lead>
+
+## The big idea
+
+The three pillars are not redundant; they're complementary.
+
+<Comparison
+  leftTitle="Pillar"
+  rightTitle="Best at"
+  rows={[
+    { attribute: 'Logs', left: 'Narrative of a single event', right: '"What happened in this request?"' },
+    { attribute: 'Metrics', left: 'Counts and aggregates over time', right: '"Is the system OK right now?"' },
+    { attribute: 'Traces', left: 'A request as it crosses N services', right: '"Why was this request slow?"' },
+  ]}
+/>
+
+## Logs — but structured
+
+Plain-text logs are useless at scale. Use **structured logging**: every log line is a
+JSON object with named fields.
+
+<Compare>
+  <Do>
+    ```json
+    { "ts": "2025-11-12T08:00:00Z", "level": "info",
+      "msg": "order.placed", "order_id": 9001, "user_id": 42,
+      "request_id": "req_abc", "latency_ms": 87 }
+    ```
+    Searchable, aggregatable, machine-parsable.
+  </Do>
+  <Dont>
+    ```text
+    08:00:00 INFO Order 9001 placed by user 42 in 87ms (req_abc)
+    ```
+    Each parser regex is its own bug.
+  </Dont>
+</Compare>
+
+Threads to weave through every log:
+
+<DefinitionList>
+  <Definition term="request_id / trace_id">Stamp every request at the gateway; propagate via headers to every downstream call.</Definition>
+  <Definition term="user_id / tenant_id">Filter all logs for one customer's tickets.</Definition>
+  <Definition term="service / version">Find the bad deploy.</Definition>
+  <Definition term="level">`debug` / `info` / `warn` / `error` — never log `info` 10× per request.</Definition>
+</DefinitionList>
+
+## Metrics
+
+A metric is a *number you can graph*. Three flavours:
+
+<DefinitionList>
+  <Definition term="Counter">Monotonic — `http_requests_total`. Take the rate over time.</Definition>
+  <Definition term="Gauge">Up and down — `db_connections_active`, `queue_depth`.</Definition>
+  <Definition term="Histogram / summary">Distribution of values — `request_latency_seconds`. The basis of percentiles.</Definition>
+</DefinitionList>
+
+The **RED method** for any service:
+
+<BoxFlow
+  nodes={[
+    { label: 'R — Rate', detail: 'requests/sec', tone: 'primary' },
+    { label: 'E — Errors', detail: 'error rate', tone: 'warn' },
+    { label: 'D — Duration', detail: 'p50/p95/p99', tone: 'success' },
+  ]}
+/>
+
+Plus the **USE method** for any resource:
+
+<BoxFlow
+  nodes={[
+    { label: 'U — Utilisation', detail: '% busy', tone: 'primary' },
+    { label: 'S — Saturation', detail: 'queue depth', tone: 'warn' },
+    { label: 'E — Errors', detail: 'errors/sec', tone: 'warn' },
+  ]}
+/>
+
+## Tracing
+
+A trace stitches together every span (DB call, RPC, internal function) for one request
+across services.
+
+```text
+trace_id=abc123
+├─ HTTP GET /orders                   [api-gateway]   142ms
+│  ├─ auth.verify                      [auth-svc]      9ms
+│  ├─ orders.list                      [orders-svc]   118ms
+│  │  ├─ db.query (SELECT … FROM orders)              92ms  ← the slow span
+│  │  └─ cache.lookup                                   2ms
+│  └─ encode_response                                   3ms
+```
+
+Two minutes of staring at a trace replaces an hour of guessing. Use **OpenTelemetry** as
+the API; most backends (Jaeger, Tempo, Honeycomb, Datadog) speak it.
+
+<Callout tone="tip" title="Sample intelligently">
+Tracing every request costs serious money at scale. Sample 1% of healthy traffic,
+**always** trace errors and slow requests. Most systems support tail-based sampling for
+this.
+</Callout>
+
+## Alerting
+
+You'll have hundreds of metrics; alert on a handful.
+
+<Steps>
+  <Step title="Alert on symptoms, not causes">
+    "User-facing latency p99 > 2s" beats "CPU > 80% on db-3."
+  </Step>
+  <Step title="Page only on what wakes you usefully">
+    A page that you ignore is worse than no page.
+  </Step>
+  <Step title="Pair every page with a runbook">
+    The first thing the on-call sees should be "if this fired, do X."
+  </Step>
+  <Step title="Track alert noise">
+    A flapping alert that fires nightly trains people to ignore real alerts.
+  </Step>
+</Steps>
+
+## In practice
+
+Start small: structured logs with request IDs, RED metrics on every service, traces on
+critical paths. Promote one engineer per quarter to **observability owner** — somebody
+who watches dashboards, removes noisy alerts, and adds the field everyone needs but
+nobody added. The pillar is staff time as much as tooling.
+
+<KeyTakeaways
+  items={[
+    'Logs = narrative; Metrics = aggregate; Traces = cross-service path.',
+    'Structured logs (JSON) with consistent fields beat plain-text by orders of magnitude.',
+    'RED for services, USE for resources — start with those eight numbers.',
+    'OpenTelemetry is the API; pick any backend that speaks it.',
+    'Alert on symptoms, sample traces, pair pages with runbooks.',
+  ]}
+/>

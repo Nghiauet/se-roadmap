@@ -1,0 +1,100 @@
+<Lead>
+**Designing Data-Intensive Applications** by Martin Kleppmann is the single most-recommended
+backend book of the last decade. It walks through replication, partitioning, transactions,
+consensus, and batch/stream processing with rare clarity. Read it once, then again every
+two years.
+</Lead>
+
+## What this book actually is
+
+A *systems* book disguised as a database book. It covers everything that makes data
+movement hard at scale — and does it without product pitches or vendor bias. Whether your
+storage is Postgres, Mongo, Kafka, S3, or all of the above, the principles apply.
+
+## Why it's worth the time
+
+DDIA is dense — ~600 pages — but every chapter teaches something with a long shelf life.
+You will recognise patterns in your existing systems you didn't know had names:
+
+<DefinitionList>
+  <Definition term="Replication trade-offs">Single leader vs multi-leader vs leaderless; sync vs async; conflict resolution.</Definition>
+  <Definition term="Partitioning strategies">By key range, by hash, by entity. Rebalancing pain.</Definition>
+  <Definition term="Transactions in depth">Isolation levels (and what they really do), distributed transactions, two-phase commit.</Definition>
+  <Definition term="Consensus">Paxos, Raft, what they buy you, why they're slow.</Definition>
+  <Definition term="Batch and stream processing">MapReduce, dataflow engines, exactly-once semantics in streams.</Definition>
+</DefinitionList>
+
+## Reading order
+
+The book is three parts, and they really are roughly independent. If you only have time
+for one section, the order matters less than picking the one your current pain matches.
+
+<Steps>
+  <Step title="Part I — Foundations of Data Systems">
+    Ch 1: Reliable, Scalable, Maintainable.
+    Ch 2: Data models and query languages.
+    Ch 3: Storage and retrieval (B-trees vs LSM-trees — the **single best chapter for
+    DB intuition**).
+    Ch 4: Encoding and evolution.
+  </Step>
+  <Step title="Part II — Distributed Data">
+    Ch 5: Replication.
+    Ch 6: Partitioning.
+    Ch 7: Transactions (the **second best chapter**).
+    Ch 8: The trouble with distributed systems (clocks, partial failures, byzantine
+    actors).
+    Ch 9: Consistency and consensus.
+  </Step>
+  <Step title="Part III — Derived Data">
+    Ch 10: Batch processing.
+    Ch 11: Stream processing.
+    Ch 12: The future of data systems.
+  </Step>
+</Steps>
+
+## How to actually finish it
+
+A few tactics that help:
+
+<Callout tone="tip" title="Read with a system in mind">
+Pick the system you work on. After each chapter, ask: *how does my system make this
+trade-off?* You'll connect the abstract material to concrete decisions.
+</Callout>
+
+<Callout tone="tip" title="Skip the references on first read">
+Each chapter ends with dozens of cited papers. On a first pass, ignore them. On a second
+pass two years later, the citations become the next syllabus.
+</Callout>
+
+<Callout tone="tip" title="One chapter per week is fine">
+Trying to finish in two weeks burns you out. One chapter on a Sunday morning over a few
+months is more sustainable than a sprint.
+</Callout>
+
+## After DDIA
+
+The natural next steps depend on what hooked you:
+
+<DefinitionList>
+  <Definition term="Want more on storage internals">Read the LSM-tree paper, the RocksDB and Cassandra source-code walkthroughs online.</Definition>
+  <Definition term="Want more on consensus">"In Search of an Understandable Consensus Algorithm" (Raft paper). Build a toy Raft.</Definition>
+  <Definition term="Want more on streams">"Stream processing with Apache Flink" or Kleppmann's own talks (the Confluent series).</Definition>
+  <Definition term="Want more on databases broadly">The CMU Database Group lectures on YouTube — free, world-class.</Definition>
+</DefinitionList>
+
+## In practice
+
+The first read gives you vocabulary; the second gives you intuition. You won't remember
+every detail — and you don't need to. But once you've read it, you can read a system's
+design doc and immediately spot the choices being made and the trade-offs being accepted.
+That clarity is what makes DDIA the recommended book for backend engineers.
+
+<KeyTakeaways
+  items={[
+    'DDIA is the single most-recommended book for backend engineers — for good reason.',
+    "Ch 3 (storage), Ch 5 (replication), Ch 7 (transactions) are the highest-leverage chapters.",
+    "Read it slowly — one chapter a week with your own system in mind beats sprinting.",
+    "Skip the references on first read; they become a follow-up syllabus.",
+    "After DDIA, the papers and lectures it cites become accessible — that's the second wave of learning.",
+  ]}
+/>

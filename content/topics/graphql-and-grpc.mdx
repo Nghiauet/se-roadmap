@@ -1,0 +1,149 @@
+<Lead>
+REST is not the only option. **GraphQL** lets clients ask for exactly the fields they
+want; **gRPC** gives schema-first, binary RPC ideal between services. Both shine in
+specific situations — and both have costs REST doesn't.
+</Lead>
+
+## The big idea
+
+Three different bets about who pays the complexity cost:
+
+<Comparison
+  leftTitle="REST"
+  rightTitle="GraphQL / gRPC"
+  rows={[
+    { attribute: 'Contract', left: 'Resource + URL conventions', right: 'Schema-first (`.graphql` / `.proto`)' },
+    { attribute: 'Encoding', left: 'JSON', right: 'JSON (GQL) / binary (gRPC)' },
+    { attribute: 'Multiple fetches', left: 'Multiple round trips', right: 'GQL: one query, many fields. gRPC: streams.' },
+    { attribute: 'Best for', left: 'Public APIs, browser, simple cases', right: 'Varied clients (GQL), internal services (gRPC)' },
+    { attribute: 'Complexity tax', left: 'On the client', right: 'On the server' },
+  ]}
+/>
+
+## GraphQL: clients ask for what they need
+
+The pitch: one endpoint, one query language, the client chooses fields. No more "5
+endpoints for 5 screens."
+
+```graphql
+query HomeScreen($userId: ID!) {
+  user(id: $userId) {
+    name
+    avatar
+    orders(last: 5) {
+      id
+      total_cents
+      status
+      items { product { name } quantity }
+    }
+    recommendations(limit: 8) {
+      id
+      name
+      price_cents
+    }
+  }
+}
+```
+
+One round trip, the *exact* shape the screen needs, no over- or under-fetching.
+
+### Where GraphQL shines
+
+<DefinitionList>
+  <Definition term="Many client types">Mobile, web, partners all want different fields from the same data.</Definition>
+  <Definition term="Aggregating multiple backends">A GraphQL gateway fans out to REST/gRPC services and stitches results.</Definition>
+  <Definition term="Evolving APIs">Adding fields is non-breaking; deprecating fields is built-in.</Definition>
+</DefinitionList>
+
+### Where it hurts
+
+<Callout tone="warn" title="Caching gets harder">
+HTTP caching works on URLs. GraphQL is one POST to `/graphql` with the query in the
+body. You can use `GET` with persisted queries, or layer your own per-field cache, but
+"the CDN does it for free" is gone.
+</Callout>
+
+<Callout tone="warn" title="N+1 by design">
+A query for `users.posts` looks innocent and triggers one query per user. The fix —
+DataLoader and batching — is essential, not optional. Forgetting it is the single most
+common GraphQL performance bug.
+</Callout>
+
+## gRPC: schema-first RPC over HTTP/2
+
+Define services and messages in a `.proto` file; generate strongly-typed client and
+server stubs in any language.
+
+```proto
+syntax = "proto3";
+
+service Orders {
+  rpc Get(GetOrderRequest) returns (Order);
+  rpc Stream(StreamRequest) returns (stream Order);
+  rpc Create(CreateOrderRequest) returns (Order);
+}
+
+message GetOrderRequest { uint64 id = 1; }
+
+message Order {
+  uint64 id = 1;
+  uint64 user_id = 2;
+  uint32 total_cents = 3;
+  Status status = 4;
+
+  enum Status { NEW = 0; PAID = 1; SHIPPED = 2; CANCELLED = 3; }
+}
+```
+
+### Where gRPC shines
+
+<DefinitionList>
+  <Definition term="Service-to-service">Lower latency than JSON-over-HTTP, contract-checked by the compiler.</Definition>
+  <Definition term="Streaming">Server-side, client-side, and bi-directional streams are first-class.</Definition>
+  <Definition term="Polyglot internal stacks">One `.proto`, ten language clients generated.</Definition>
+</DefinitionList>
+
+### Where it hurts
+
+<Callout tone="warn" title="Browsers can't speak it natively">
+You need gRPC-Web (a proxy that translates) to reach browsers. For external APIs,
+REST/JSON is still the safer choice.
+</Callout>
+
+<Callout tone="warn" title="Debugging is harder">
+You can't curl a gRPC endpoint trivially — the body is binary Protobuf. Tools (`grpcurl`,
+Postman gRPC) exist but the learning curve is real.
+</Callout>
+
+## Picking between them
+
+<Steps>
+  <Step title="External / browser-facing API?">
+    Default to REST. Reach for GraphQL when client diversity makes REST endpoint sprawl.
+  </Step>
+  <Step title="Service-to-service, internal?">
+    Default to gRPC. Schema-first contracts and binary perf are the win.
+  </Step>
+  <Step title="Many client teams, varied screens?">
+    GraphQL gateway in front of gRPC services is a very common modern shape.
+  </Step>
+  <Step title="High-throughput streaming?">
+    gRPC streams or a dedicated streaming protocol (WebSockets, SSE).
+  </Step>
+</Steps>
+
+## In practice
+
+The wrong question is "should I use GraphQL/gRPC?" The right question is "what problem
+am I solving that REST doesn't?" If you can't name one, REST is still the cheapest
+correct answer.
+
+<KeyTakeaways
+  items={[
+    'GraphQL lets clients ask for exactly the fields they need — great for varied client types.',
+    'GraphQL costs you HTTP caching and forces you to solve N+1 with batching/DataLoader.',
+    'gRPC is schema-first, binary, and shines between services.',
+    'gRPC streaming is first-class, but browsers need gRPC-Web.',
+    "A common shape: REST or GraphQL at the edge, gRPC between internal services.",
+  ]}
+/>

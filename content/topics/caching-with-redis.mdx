@@ -1,0 +1,177 @@
+<Lead>
+"There are only two hard things in computer science: cache invalidation and naming
+things." Get cache invalidation right and Redis is the cheapest 100× speedup you'll ever
+deploy. Get it wrong and users see stale data forever.
+</Lead>
+
+## The big idea
+
+A cache is a **fast, small store of computed answers**. Three things define a cache:
+when you populate it, when you invalidate it, and what happens when it's wrong. A cache
+without an answer to all three is a memory leak.
+
+## The standard strategies
+
+<Comparison
+  leftTitle="Strategy"
+  rightTitle="Trade-off"
+  rows={[
+    {
+      attribute: 'Cache-aside',
+      left: 'App reads cache first; on miss, reads DB and writes back to cache.',
+      right: 'Simple. Stale reads possible if the DB changes without invalidation.',
+    },
+    {
+      attribute: 'Write-through',
+      left: 'Every write goes to cache + DB in lock-step.',
+      right: 'Always-fresh reads; slower writes; cache and DB can drift on partial failure.',
+    },
+    {
+      attribute: 'Write-behind',
+      left: 'Write to cache, flush to DB asynchronously.',
+      right: 'Fastest writes; risk of data loss if the cache dies before flushing.',
+    },
+    {
+      attribute: 'Refresh-ahead',
+      left: 'Background job re-populates hot keys before they expire.',
+      right: 'Hides latency for predictable hot keys; wastes work on cold ones.',
+    },
+  ]}
+/>
+
+## Cache-aside in code
+
+The default for most apps:
+
+<CodeTabs>
+  <CodeTab lang="ts">
+    ```ts
+    async function getUser(id: number): Promise<User | null> {
+      const key = `user:${id}`;
+      const cached = await redis.get(key);
+      if (cached) return JSON.parse(cached);
+
+      const user = await db.user.findUnique({ where: { id } });
+      if (user) {
+        await redis.set(key, JSON.stringify(user), 'EX', 300);   // 5 min TTL
+      }
+      return user;
+    }
+
+    async function updateUser(id: number, patch: Partial<User>) {
+      await db.user.update({ where: { id }, data: patch });
+      await redis.del(`user:${id}`);                              // invalidate
+    }
+    ```
+  </CodeTab>
+  <CodeTab lang="python">
+    ```python
+    import json
+
+    async def get_user(id: int) -> User | None:
+        key = f"user:{id}"
+        cached = await redis.get(key)
+        if cached:
+            return User(**json.loads(cached))
+
+        user = await db.user.find_unique(where={"id": id})
+        if user:
+            await redis.set(key, json.dumps(user.dict()), ex=300)   # 5 min TTL
+        return user
+
+    async def update_user(id: int, patch: dict) -> None:
+        await db.user.update(where={"id": id}, data=patch)
+        await redis.delete(f"user:{id}")                            # invalidate
+    ```
+  </CodeTab>
+</CodeTabs>
+
+Three things to notice: TTL on the `SET`, explicit invalidation on writes, and
+serialisation (Redis stores strings).
+
+## TTLs and invalidation
+
+Two ways out of "stale forever":
+
+<Steps>
+  <Step title="Time-based (TTL)">
+    Every key expires after `EX seconds`. Pick a TTL short enough to be tolerable, long
+    enough to be useful. 5 minutes is a sane default; 1 second is a denial-of-service on
+    your DB.
+  </Step>
+  <Step title="Event-based">
+    On every write, `DEL` the affected keys. The cache repopulates on next read. More
+    consistent, but you must know *every* key affected by a write.
+  </Step>
+</Steps>
+
+Most production systems use **both**: event-based invalidation for known writes plus a
+TTL as a safety net for the bugs you missed.
+
+## Common pitfalls
+
+<Callout tone="warn" title="The thundering herd">
+A hot key expires; 1,000 concurrent requests all miss the cache and hammer the DB at
+once. Mitigate with: short request-scoped locks ("only one fetch per key in flight"),
+randomised jitter in TTLs, or refresh-ahead.
+</Callout>
+
+<Callout tone="warn" title="Cache stampede on cold start">
+You just deployed and the cache is empty. Every request goes to the DB. Warm critical
+keys on boot.
+</Callout>
+
+<Callout tone="warn" title="Inconsistent serialisation">
+One writer stores JSON, another stores Protobuf bytes, a reader can't tell. Pick one
+serialisation and codify it.
+</Callout>
+
+## Eviction policy
+
+Redis must drop something when it runs out of memory. Configure `maxmemory-policy`
+explicitly — the default depends on the version and surprises everyone.
+
+<DefinitionList>
+  <Definition term="allkeys-lru">Drop least-recently-used keys; safe default for caches.</Definition>
+  <Definition term="volatile-lru">Same but only keys with a TTL — use if Redis also holds non-cache state.</Definition>
+  <Definition term="allkeys-lfu">Least-frequently-used; better for skewed access patterns.</Definition>
+  <Definition term="noeviction">Reject writes when full. Use **only** when Redis is your source of truth, never as a cache.</Definition>
+</DefinitionList>
+
+## Beyond GET/SET
+
+Redis has data types that make it more than a key-value store:
+
+```bash
+# Counter
+INCR  rate:42:minute
+EXPIRE rate:42:minute 60
+
+# Set (for "have I seen this user today?")
+SADD  daily_active:2025-11-12 42
+
+# Sorted set (leaderboard)
+ZADD  leaderboard 1500 alice
+ZRANGE leaderboard 0 9 REV WITHSCORES
+
+# Pub/sub
+PUBLISH chat:room42 "hello"
+SUBSCRIBE chat:room42
+```
+
+## In practice
+
+The biggest cache wins are at the boundary of a slow operation: a complex aggregation, a
+third-party API call, a per-page render. Cache the **answer**, not the input. And keep
+the cache simple — when you find yourself building a "cache that's almost a DB," you've
+gone too far.
+
+<KeyTakeaways
+  items={[
+    'Cache-aside (read-through with explicit invalidation) is the default strategy.',
+    'TTLs are your safety net; event-based invalidation is your primary mechanism.',
+    'Beware the thundering herd — jitter, locks, or refresh-ahead.',
+    "Set `maxmemory-policy` explicitly; the default surprises everyone.",
+    "Redis is more than a key-value store — counters, sets, sorted sets, pub/sub.",
+  ]}
+/>

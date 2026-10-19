@@ -1,0 +1,86 @@
+<Lead>
+**Head First Design Patterns** by Eric & Elisabeth Freeman is the most-recommended book
+for someone who has read about patterns but doesn't feel them yet. It uses cartoons,
+dialogues, and very small examples to make the Gang of Four ideas stick.
+</Lead>
+
+## What this book actually is
+
+It is the book to read **after you have hit the pain** — written one too many `if`
+chains, copy-pasted code between three callers, found yourself unable to test a class
+without mocking the world. The Freemans walk you through each pattern by first showing
+the bad code that motivates it.
+
+<Callout tone="info" title="The Head First series style">
+Goofy diagrams, big fonts, "tell a friend"-style explanations. It is *deliberately*
+non-dry. Some readers love it, some can't stand the tone. Skim the first chapter at a
+bookshop or library to decide which camp you're in.
+</Callout>
+
+## What you'll get out of it
+
+<Steps>
+  <Step title="A mental Rolodex of named shapes">
+    Once you can say "this is Strategy" instead of "this is some kind of swappable
+    behaviour thing," design conversations get much shorter.
+  </Step>
+  <Step title="The motivating problem for each pattern">
+    Every chapter starts with a flawed design, shows the pain, then evolves toward the
+    pattern. This is the *opposite* of reading the GoF book cold.
+  </Step>
+  <Step title="Anti-pattern recognition">
+    Each chapter ends with "don't overuse this." You'll learn when *not* to apply.
+  </Step>
+  <Step title="Vocabulary for code reviews">
+    Reviewers can suggest "make this an Adapter" instead of writing six paragraphs.
+  </Step>
+</Steps>
+
+## Suggested reading order
+
+The book is structured by accumulation, but if you only have time for a subset:
+
+<BoxFlow
+  direction="vertical"
+  nodes={[
+    { label: 'Ch 1: Strategy', detail: 'the pattern that opens the door', tone: 'primary' },
+    { label: 'Ch 2: Observer', detail: 'underlies every reactive system', tone: 'primary' },
+    { label: 'Ch 3: Decorator', detail: 'composition over inheritance', tone: 'success' },
+    { label: 'Ch 4: Factory', detail: 'creation discipline', tone: 'success' },
+    { label: 'Ch 5: Singleton', detail: 'and when not to use it', tone: 'warn' },
+    { label: 'Ch 10: State', detail: 'replaces nested ifs', tone: 'primary' },
+    { label: 'Ch 11: Proxy', detail: 'access control + lazy load', tone: 'muted' },
+  ]}
+/>
+
+Skip the ones you already feel comfortable with; come back later if needed.
+
+## After the book
+
+Once you've got the vocabulary, the GoF book ("Design Patterns: Elements of Reusable
+Object-Oriented Software") becomes readable as a reference. **Refactoring Guru**
+(refactoring.guru) is a free web companion with the same patterns plus side-by-side
+language examples — keep it open in a tab.
+
+<Callout tone="tip" title="A modern caveat">
+The book leans heavily on inheritance. Today's idiomatic code in TypeScript, Go, Rust,
+and even Java leans on **composition + functions** for most of the same problems. Learn
+the patterns, then *translate* them into your language's idioms — most patterns lose
+half their boilerplate in 2026.
+</Callout>
+
+## In practice
+
+Read it once with a code editor open and re-implement two or three patterns in your
+working language. The patterns you don't use in real code, you'll still recognise during
+code review. That recognition is the entire payoff.
+
+<KeyTakeaways
+  items={[
+    'Head First is the most approachable introduction — pick it when patterns feel mystical.',
+    'Each chapter motivates the pattern with the bad code it fixes.',
+    'Strategy, Observer, Decorator, Factory are the highest-leverage chapters.',
+    'Modern languages express most patterns with less code than the book shows.',
+    'After this, GoF and Refactoring Guru become useful references.',
+  ]}
+/>

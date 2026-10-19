@@ -1,0 +1,153 @@
+<Lead>
+Stop thinking in **CRUD** ("update this row"). Start thinking in **events** ("this thing
+happened, who cares?"). Event-driven architecture turns one-to-one calls between services
+into one-to-many broadcasts, and unlocks event sourcing and CQRS along the way.
+</Lead>
+
+## The big idea
+
+A service does something, then emits an event describing what happened. Other services
+subscribe to events they care about. Nobody calls anybody.
+
+<BoxFlow
+  nodes={[
+    { label: 'Orders service', detail: 'emits order.placed', tone: 'primary' },
+    { label: 'Event bus', tone: 'warn' },
+    { label: 'Email worker', tone: 'success' },
+    { label: 'Analytics', tone: 'success' },
+    { label: 'Inventory', tone: 'success' },
+  ]}
+/>
+
+The producer doesn't know — and doesn't need to know — who consumes the event.
+
+## Events vs commands
+
+A naming discipline that pays back forever:
+
+<Comparison
+  leftTitle="Command"
+  rightTitle="Event"
+  rows={[
+    { attribute: 'Tense', left: 'Imperative — "Charge the card"', right: 'Past — "Card was charged"' },
+    { attribute: 'Direction', left: 'Sender → one specific receiver', right: 'Producer → anyone listening' },
+    { attribute: 'Can be rejected?', left: 'Yes', right: 'No — it already happened' },
+    { attribute: 'Example name', left: '`ChargeCard`, `SendEmail`', right: '`order.placed`, `card.charged`' },
+  ]}
+/>
+
+When a service should be **told to do something**, that's a command (queue + worker).
+When a service should **react to something that happened elsewhere**, that's an event
+(pub/sub).
+
+## What an event looks like
+
+```json
+{
+  "id":           "evt_9001",
+  "type":         "order.placed",
+  "version":      1,
+  "occurred_at":  "2025-11-12T08:00:00Z",
+  "actor":        { "type": "user", "id": 42 },
+  "subject":      { "type": "order", "id": 9001 },
+  "data": {
+    "total_cents": 4995,
+    "items":       [{ "sku": "X1", "qty": 2 }]
+  }
+}
+```
+
+A few non-obvious rules:
+- **Version your event schema** — you will need to evolve it.
+- **`occurred_at` ≠ `processed_at`** — keep both if order matters.
+- **Include the subject ID**, not the whole object — the subject can change after the event.
+
+## Event sourcing
+
+Instead of storing current state, store the **stream of events** that produced it.
+Current state is derived by replaying the events.
+
+```text
+order_9001 events:
+  order.created      qty=2  sku=X1
+  order.item_added   qty=1  sku=Y2
+  order.paid         amount=4995
+  order.shipped      tracking=…
+
+state = reduce(events, applyEvent, {})   // = current order
+```
+
+Wins:
+- **Audit log for free** — the events *are* the history.
+- **Time travel** — what was state at noon yesterday? Replay events up to then.
+- **New projections** — need a new read view? Re-derive it from the event stream.
+
+Cost: querying *current* state requires either replay (slow) or maintaining
+**projections** (extra code).
+
+## CQRS — separate the write and read models
+
+Command Query Responsibility Segregation: writes go to one model (the event store /
+write side), reads come from a different model (denormalised, query-optimised).
+
+<BoxFlow
+  nodes={[
+    { label: 'Client (write)', tone: 'muted' },
+    { label: 'Command handler', detail: 'validates → emit events', tone: 'primary' },
+    { label: 'Event store', detail: 'append-only log', tone: 'warn' },
+    { label: 'Projector', detail: 'event → table', tone: 'success' },
+    { label: 'Read model', detail: 'denormalised', tone: 'success' },
+  ]}
+/>
+
+The write side enforces invariants and emits events. The read side is whatever shape
+your queries need — a fast denormalised table, an ElasticSearch index, a graph database.
+Eventual consistency between them is the cost.
+
+## Pitfalls
+
+<Callout tone="warn" title="Event spaghetti">
+Without strong governance, every team adds events and every service subscribes to
+everything. Six months later nobody knows what listens to what. Define **event ownership**
+— each event has a producing service that owns the schema.
+</Callout>
+
+<Callout tone="warn" title="At-least-once = duplicates">
+Most event buses deliver at-least-once. Subscribers must be idempotent. Use the event ID
+as a dedupe key.
+</Callout>
+
+<Callout tone="warn" title="Order is hard">
+Strict global ordering of events across producers is essentially impossible. Partition
+by a key (order_id, user_id) and only require ordering within a partition.
+</Callout>
+
+## When to reach for it
+
+Event-driven is great when:
+- One action triggers many downstream side effects (send email, update search index,
+  update analytics, notify mobile).
+- The downstream consumers change frequently (you'd otherwise be editing the producer
+  every time).
+- You need an audit log / replay capability anyway.
+
+Event-driven is **overkill** for:
+- A small app with a single team and tight coupling between modules.
+- Anywhere you need strict global ordering or distributed transactions.
+
+## In practice
+
+Start with events for **integration between services** (event bus between bounded
+contexts) before reaching for **full event sourcing within a service**. The first is a
+modest architectural choice; the second is a fundamental data-modeling commitment.
+
+<KeyTakeaways
+  items={[
+    'Events are facts in the past tense; commands are requests in the imperative. Name them right.',
+    'A producer emits; many consumers subscribe — the producer doesn\'t know who.',
+    'Event sourcing stores the history; current state is derived. Audit and time-travel for free.',
+    'CQRS splits write and read models — accept eventual consistency, gain query freedom.',
+    'Govern event ownership, version schemas, make subscribers idempotent.',
+    'Reach for events to decouple consumers; reach for full event sourcing only with a clear need.',
+  ]}
+/>

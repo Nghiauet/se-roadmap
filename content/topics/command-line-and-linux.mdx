@@ -1,0 +1,107 @@
+<Lead>
+Backend work eventually lands on a shell: reading logs, checking ports, tailing a service,
+editing config, or proving that a container can reach a database. Linux basics make that
+work calm instead of mysterious.
+</Lead>
+
+## The big idea
+
+The shell is a programmable workbench. Small tools do one thing, print text, and compose
+through pipes and exit codes.
+
+<BoxFlow
+  nodes={[
+    { label: 'command', detail: 'do one thing', tone: 'primary' },
+    { label: 'stdout', detail: 'normal output', tone: 'success' },
+    { label: 'stderr', detail: 'errors/logs', tone: 'warn' },
+    { label: 'exit code', detail: 'success or failure', tone: 'muted' },
+  ]}
+/>
+
+If you can navigate files, search text, inspect processes, and understand permissions,
+you can debug most local backend problems.
+
+## Files and search
+
+```bash
+pwd                    # where am I?
+ls -la                 # what is here?
+cd app/api             # move around
+find . -name '*.py'    # find by name
+rg "DATABASE_URL"      # search file contents
+sed -n '1,120p' file   # print a range
+tail -f app.log        # follow new log lines
+```
+
+Use `rg` first when it exists. It is fast, respects ignore files, and keeps searches
+focused.
+
+## Pipes and redirection
+
+```bash
+docker compose logs api | rg "ERROR|Traceback"
+curl -s http://localhost:8000/health > health.json
+npm run build 2> build-errors.txt
+```
+
+<DefinitionList>
+  <Definition term="pipe">Send one command's output into another command.</Definition>
+  <Definition term="redirect">Write stdout or stderr to a file instead of the terminal.</Definition>
+  <Definition term="exit code">`0` means success; non-zero means failure. CI depends on this.</Definition>
+  <Definition term="env var">A key-value setting passed into a process, like `DATABASE_URL`.</Definition>
+</DefinitionList>
+
+## Permissions
+
+Linux permissions answer three questions: who owns the file, which group can access it,
+and what everyone else can do.
+
+```bash
+ls -l deploy.sh
+# -rwxr-x--- 1 app app 512 deploy.sh
+```
+
+The three permission groups are user, group, and other. The three operations are read,
+write, and execute. A script without execute permission can still be run with
+`bash deploy.sh`, but not as `./deploy.sh`.
+
+## Processes and ports
+
+```bash
+ps aux | rg node
+ss -ltnp
+lsof -i :3000
+kill -TERM <pid>
+```
+
+For backend services, "connection refused" usually means nothing is listening on that host
+and port. "Timeout" means packets are not coming back quickly enough. Those are different
+failures.
+
+## Services and logs
+
+```bash
+systemctl status nginx
+journalctl -u nginx -n 100 --no-pager
+docker compose ps
+docker compose logs -f api
+```
+
+Read the first error and the last error. The first often explains the cause; the last is
+often just the crash repeating.
+
+## In practice
+
+Pick one running app and answer: what process owns the port, where are its logs, what env
+vars did it start with, and what user runs it? That single exercise connects shell basics
+to real operations.
+
+<KeyTakeaways
+  items={[
+    "The shell composes small tools with text, pipes, redirects, and exit codes.",
+    "Learn file navigation, `rg`, `sed`, `tail`, `ps`, `ss`, `lsof`, and service logs early.",
+    "Permissions are user/group/other crossed with read/write/execute.",
+    "Connection refused, timeout, and HTTP error responses point to different layers.",
+    "Every backend engineer should be able to inspect a local service from the terminal.",
+  ]}
+/>

@@ -1,0 +1,125 @@
+<Lead>
+A load balancer is the front door to your service: it spreads traffic across instances,
+removes broken ones, and (when configured well) handles the boring 90% of failures so
+your application doesn't have to.
+</Lead>
+
+## The big idea
+
+You have N identical app instances and one stream of incoming requests. The load balancer
+distributes the requests, watches health, and pretends to be **one** service to clients.
+
+<BoxFlow
+  nodes={[
+    { label: 'Clients', tone: 'muted' },
+    { label: 'Load balancer', detail: 'L4 or L7', tone: 'primary' },
+    { label: 'App pool', detail: 'N instances', tone: 'success' },
+  ]}
+/>
+
+## L4 vs L7
+
+The first decision: at which layer does the LB look at traffic?
+
+<Comparison
+  leftTitle="L4 (TCP)"
+  rightTitle="L7 (HTTP)"
+  rows={[
+    { attribute: 'Sees', left: 'IPs and ports', right: 'Headers, paths, methods, body' },
+    { attribute: 'Smart routing', left: 'No', right: 'Yes — by URL, header, cookie' },
+    { attribute: 'TLS termination', left: 'Optional', right: 'Common (offload to LB)' },
+    { attribute: 'Speed', left: 'Faster, less CPU', right: 'Slower; richer features' },
+    { attribute: 'Examples', left: 'AWS NLB, HAProxy in TCP mode', right: 'AWS ALB, NGINX, Envoy, Traefik' },
+  ]}
+/>
+
+For most services: **L7**. The smart routing pays for the CPU.
+
+## Algorithms
+
+How does the LB pick *which* backend gets the next request?
+
+<DefinitionList>
+  <Definition term="Round robin">Cycle through instances in order. Simple; assumes uniform request cost — wrong often.</Definition>
+  <Definition term="Least connections">Send to the instance with the fewest active connections. Good when requests vary in duration.</Definition>
+  <Definition term="Random">Pick uniformly at random. Surprisingly competitive; trivially scalable.</Definition>
+  <Definition term="Power of two choices">Pick two random instances, send to the less-loaded one. Mathematically wins over both round-robin and pure random in practice.</Definition>
+  <Definition term="Consistent hashing">Same key (user ID, session) always goes to the same backend. Used for sticky sessions and sharded caches.</Definition>
+</DefinitionList>
+
+## Health checks
+
+Without them, a load balancer cheerfully forwards traffic to a dead instance.
+
+```yaml
+health_check:
+  path: /healthz
+  interval: 5s
+  timeout: 2s
+  healthy_threshold: 2
+  unhealthy_threshold: 3
+```
+
+<Callout tone="tip" title="What `/healthz` should do">
+**Check what would actually break a request:** can I reach the DB? Can I open a Redis
+connection? Don't return 200 just because the process is alive. But don't go overboard —
+a flaky health check causes flapping and removes good instances.
+</Callout>
+
+Two flavours of health check coexist:
+
+<Steps>
+  <Step title="Liveness">
+    Is the process responsive? `200` on a trivial endpoint. Used by orchestrators (K8s)
+    to restart wedged pods.
+  </Step>
+  <Step title="Readiness">
+    Is this instance ready to *take* traffic? Returns 503 during startup, drain, or
+    dependency outages. Used by the load balancer to remove instances from rotation.
+  </Step>
+</Steps>
+
+## Sticky sessions (and why to avoid them)
+
+A sticky session pins a user to one backend by cookie or IP hash. Useful when each
+backend caches per-user state in memory. The cost: failover is painful (the user's data
+is on a now-dead instance), and rolling deploys break stickiness.
+
+**Better:** make the backend stateless and store session data in Redis or a signed
+cookie. The load balancer goes back to round-robin and life is simpler.
+
+## TLS termination
+
+Most production setups terminate TLS *at the load balancer*. The LB has the cert, decrypts
+traffic, and forwards plain HTTP over the private network to the backends. Saves CPU on
+each instance and centralises certificate rotation.
+
+<Callout tone="warn" title="Don't forget the X-Forwarded-* headers">
+After TLS termination, the backend sees an internal IP and `http` scheme. The LB must add
+`X-Forwarded-For`, `X-Forwarded-Proto`, `X-Forwarded-Host` so the app sees the real
+client. Configure framework middleware to trust them — and **only** trust them from
+known sources.
+</Callout>
+
+## In practice
+
+The load balancer is also your operational handle for:
+
+- **Rolling deploys** — drain connections from old instances before stopping them.
+- **Blue-green / canary** — weight traffic between two pools.
+- **Rate limiting + WAF** — block bad traffic before it reaches your app.
+- **Geo-routing** — send users to their nearest region.
+
+A surprising number of "incidents" are LB misconfigurations: a stale target group, a
+health check pointing at the wrong path, a TLS cert expiring. Treat the LB config like
+production code.
+
+<KeyTakeaways
+  items={[
+    "L7 load balancing buys smart routing, TLS termination, and observability — usually worth the CPU.",
+    'Power-of-two choices or least-connections beats vanilla round-robin in practice.',
+    "Health checks should test what would break a request, not just process liveness.",
+    'Avoid sticky sessions; make backends stateless instead.',
+    "TLS termination at the LB simplifies certs but requires X-Forwarded-* handling downstream.",
+  ]}
+/>
