@@ -11,6 +11,10 @@ export function generateStaticParams() {
   return ALL_SLUGS.map((slug) => ({ slug }));
 }
 
+// Unknown slugs: plain 404 instead of rendering (CPU) and caching (disk) a
+// "Not found" PNG for every made-up URL. See the note in page.tsx.
+export const dynamicParams = false;
+
 const DIFFICULTY = { 1: 'Beginner', 2: 'Intermediate', 3: 'Advanced' } as const;
 const TYPE_LABEL = { core: 'Concept', practice: 'Project', read: 'Reading' } as const;
 

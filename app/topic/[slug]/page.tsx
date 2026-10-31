@@ -25,6 +25,12 @@ export function generateStaticParams() {
   return ALL_SLUGS.map((slug) => ({ slug }));
 }
 
+// Every topic is pre-rendered. Without this, any /topic/<random> request was
+// rendered on demand and its 404 page cached to disk (.html + .rsc + .meta,
+// ~23 KB per unique URL, in a directory the container user can write), so a
+// crawler or attacker could grow the container's disk without limit.
+export const dynamicParams = false;
+
 const SITE_URL = 'https://roadmap.wakeuplate.io.vn';
 
 const DIFFICULTY_LABEL = { 1: 'Beginner', 2: 'Intermediate', 3: 'Advanced' } as const;
