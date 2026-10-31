@@ -58,7 +58,7 @@ Configured in `next.config.mjs` via `@next/mdx`:
 
 ### Client-state hooks
 
-`hooks/use-local-storage.ts` is the foundation: handles SSR-safe lazy hydration (via `initialised` ref to avoid clobbering on first render), cross-tab `storage` events, and silent failure on quota/privacy errors. The feature-specific hooks (`use-bookmarks`, `use-notes`, `use-progress`) wrap it with the right key from `lib/storage-keys.ts`. **Always go through these hooks rather than touching `localStorage` directly** — the SSR-safety and cross-tab sync are easy to miss.
+`hooks/use-local-storage.ts` is the foundation: one `useSyncExternalStore`-backed store per key shared by every hook instance in the tab (writes are computed from the latest stored value and notify all instances), the server snapshot during hydration (stored value arrives in the re-render after), cross-tab `storage` events, and an in-memory fallback on quota/privacy errors. Many components read the same key at once (the homepage has ~50 instances), so never give an instance its own copy that it writes back — that is how a homepage visit used to wipe progress and bookmarks. The feature-specific hooks (`use-bookmarks`, `use-notes`, `use-progress`) wrap it with the right key from `lib/storage-keys.ts`. **Always go through these hooks rather than touching `localStorage` directly** — the SSR-safety and cross-tab sync are easy to miss.
 
 Components that read this state must be Client Components (`'use client'`) and should guard against the pre-hydration empty state to avoid hydration mismatches (`hooks/use-has-mounted.ts` helps here).
 
