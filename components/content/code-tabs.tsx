@@ -13,10 +13,16 @@ const LABEL: Record<Lang, string> = {
   python: 'Python',
 };
 
+// localStorage access throws (SecurityError) when the browser blocks site data.
+// Uncaught in the effect below, that replaced the whole lesson with Next's
+// "Application error" screen on the 16 pages that use <CodeTabs>.
 function readLang(): Lang {
   if (typeof window === 'undefined') return 'ts';
-  const stored = window.localStorage.getItem(STORAGE_KEY);
-  return stored === 'python' ? 'python' : 'ts';
+  try {
+    return window.localStorage.getItem(STORAGE_KEY) === 'python' ? 'python' : 'ts';
+  } catch {
+    return 'ts';
+  }
 }
 
 function useSharedLang(): [Lang, (next: Lang) => void] {
@@ -33,7 +39,11 @@ function useSharedLang(): [Lang, (next: Lang) => void] {
   }, []);
 
   const update = (next: Lang) => {
-    window.localStorage.setItem(STORAGE_KEY, next);
+    try {
+      window.localStorage.setItem(STORAGE_KEY, next);
+    } catch {
+      // not remembered across visits, but the switch still works on this page
+    }
     window.dispatchEvent(new CustomEvent<Lang>(EVENT, { detail: next }));
   };
 
