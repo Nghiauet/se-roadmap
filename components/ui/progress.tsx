@@ -12,6 +12,9 @@ const Progress = React.forwardRef<
 >(({ className, value, indicatorClassName, ...props }, ref) => (
   <ProgressPrimitive.Root
     ref={ref}
+    // Forward `value`: without it Radix renders an indeterminate progressbar
+    // (no aria-valuenow), so screen readers never heard the percentage.
+    value={value}
     className={cn(
       'relative h-2 w-full overflow-hidden rounded-full bg-muted',
       className,

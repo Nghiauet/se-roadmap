@@ -33,6 +33,9 @@ export function Header() {
               <Link
                 key={href}
                 href={href}
+                // the visible label is hidden on phones, leaving an icon-only link
+                aria-label={label}
+                aria-current={active ? 'page' : undefined}
                 className={cn(
                   'inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm transition-colors',
                   'hover:bg-accent hover:text-accent-foreground',

@@ -68,6 +68,7 @@ export function CategoryCluster({ categoryId }: { categoryId: CategoryId }) {
           </div>
           <Progress
             value={stats.percent}
+            aria-label={`${category.label} progress`}
             className="h-1.5 w-full"
             indicatorClassName="transition-all"
             style={{

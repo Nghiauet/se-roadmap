@@ -36,7 +36,7 @@ export function OverallProgress() {
       <Progress
         className="mt-4 h-2"
         value={percent}
-        aria-label={`${percent} percent complete`}
+        aria-label="Overall progress"
       />
       <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-1.5 sm:grid-cols-3 lg:grid-cols-6">
         {CATEGORIES.map((cat) => {

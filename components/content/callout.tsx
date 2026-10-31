@@ -51,8 +51,11 @@ export function Callout({
 }) {
   const t = TONES[tone];
   const Icon = t.icon;
+  // role="note", not <aside>: an <aside> inside the article is a complementary
+  // landmark, which flooded landmark navigation (up to 4 per lesson).
   return (
-    <aside
+    <div
+      role="note"
       className={cn(
         'mt-6 flex gap-3 rounded-lg border p-4',
         t.ring,
@@ -67,6 +70,6 @@ export function Callout({
         </p>
         {children}
       </div>
-    </aside>
+    </div>
   );
 }

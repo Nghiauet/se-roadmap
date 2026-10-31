@@ -30,8 +30,11 @@ export function BoxFlow({
   return (
     <figure className={cn('mt-6 rounded-xl border bg-card/40 p-5 shadow-sm', className)}>
       <div
+        // Wide flows scroll sideways on desktop; tabIndex lets keyboard users
+        // focus the strip and scroll it with the arrow keys.
+        tabIndex={direction === 'horizontal' ? 0 : undefined}
         className={cn(
-          'flex items-stretch gap-2',
+          'flex items-stretch gap-2 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
           direction === 'horizontal'
             ? 'flex-col sm:flex-row sm:items-center sm:overflow-x-auto'
             : 'flex-col items-stretch',
