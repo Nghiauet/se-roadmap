@@ -1,5 +1,7 @@
 node_modules/
 .next/
+# managed by Next 16 (`next dev` and `next build` write different contents); not committed, per Next's docs
+next-env.d.ts
 out/
 build/
 dist/

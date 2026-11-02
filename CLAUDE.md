@@ -29,7 +29,7 @@ Skipping any step — especially the rebuild — has burned us before; `next dev
 
 ## Architecture
 
-This is a **frontend-only, statically-generated** Next.js 16 (App Router, React 19) site. There is no backend, no API routes, no database. All user state lives in `localStorage`: bookmarks, notes and completion under the `se-roadmap:*` keys in `lib/storage-keys.ts`, the code-tab language under `se-roadmap:code-lang`, and the theme under next-themes' default key `theme` (formats in README → Storage keys; changing a key or format resets that value for every visitor). The site is reachable in production at `https://roadmap.wakeuplate.io.vn/` via a Cloudflare Tunnel + nginx reverse proxy stack that lives outside this repo at `../../nginx_setup` — the container only binds `127.0.0.1:46402`, never the public internet.
+This is a **frontend-only, statically-generated** Next.js 16 (App Router, React 19) site. Next 16 ships its docs in `node_modules/next/dist/docs/`; APIs differ from Next 14 (async `params`, also in `opengraph-image`), so check there before writing Next-specific code. There is no backend, no API routes, no database. All user state lives in `localStorage`: bookmarks, notes and completion under the `se-roadmap:*` keys in `lib/storage-keys.ts`, the code-tab language under `se-roadmap:code-lang`, and the theme under next-themes' default key `theme` (formats in README → Storage keys; changing a key or format resets that value for every visitor). The site is reachable in production at `https://roadmap.wakeuplate.io.vn/` via a Cloudflare Tunnel + nginx reverse proxy stack that lives outside this repo at `../../nginx_setup` — the container only binds `127.0.0.1:46402`, never the public internet.
 
 ### The curriculum is the spine
 

@@ -40,6 +40,9 @@ const nextConfig = {
   images: {
     unoptimized: true,
   },
+  // `next dev` would otherwise write a Next-managed AGENTS.md into the repo on every
+  // run; agent instructions for this repo live in CLAUDE.md.
+  agentRules: false,
 };
 
 export default withMDX(nextConfig);
