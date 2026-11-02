@@ -29,6 +29,8 @@ function useSharedLang(): [Lang, (next: Lang) => void] {
   const [lang, setLang] = useState<Lang>('ts');
 
   useEffect(() => {
+    // The server always renders 'ts'; switch to the saved choice once hydrated.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLang(readLang());
     const handler = (event: Event) => {
       const detail = (event as CustomEvent<Lang>).detail;

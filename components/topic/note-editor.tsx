@@ -13,21 +13,17 @@ export function NoteEditor({ slug }: { slug: string }) {
   const { get, set } = useNotes();
   const stored = mounted ? get(slug) : '';
 
-  const [draft, setDraft] = useState('');
+  // null until the visitor types. Until then the box shows the stored note itself, so
+  // it is right whichever render the saved note arrives in after hydration. (Copying
+  // it into the draft from an effect relied on that timing: had the copy run before
+  // the note arrived, the box would show empty and the next keystroke would replace
+  // the saved note.) Only typing saves.
+  const [draft, setDraft] = useState<string | null>(null);
   const [status, setStatus] = useState<SaveStatus>('idle');
-  const hydrated = useRef(false);
   const savedTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   useEffect(() => {
-    if (!mounted || hydrated.current) return;
-    setDraft(stored);
-    hydrated.current = true;
-  }, [mounted, stored]);
-
-  useEffect(() => {
-    if (!hydrated.current) return;
-    if (draft === stored) return;
-    setStatus('saving');
+    if (draft === null) return;
     const t = setTimeout(() => {
       set(slug, draft);
       setStatus('saved');
@@ -35,16 +31,18 @@ export function NoteEditor({ slug }: { slug: string }) {
       savedTimer.current = setTimeout(() => setStatus('idle'), 1200);
     }, 500);
     return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft, slug]);
+  }, [draft, slug, set]);
 
   return (
     <div className="space-y-2">
       <Textarea
         id={`note-${slug}`}
         placeholder="Anything you want to remember about this topic — open questions, useful links, your own examples."
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
+        value={draft ?? stored}
+        onChange={(e) => {
+          setDraft(e.target.value);
+          setStatus('saving');
+        }}
         rows={7}
         disabled={!mounted}
         className="min-h-[150px] resize-y bg-background/60"

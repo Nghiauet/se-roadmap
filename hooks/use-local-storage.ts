@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useMemo, useRef, useSyncExternalStore } from 'react';
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react';
 
 type SetValue<T> = (value: T | ((prev: T) => T)) => void;
 
@@ -74,23 +74,23 @@ function parse<T>(raw: string | null, fallback: T): T {
 
 export function useLocalStorage<T>(key: string, initial: T): [T, SetValue<T>] {
   // Callers pass a fresh literal ({} / []) on every render; keep the first one.
-  const initialRef = useRef(initial);
+  const [fallback] = useState(initial);
   const subscribeToKey = useCallback((notify: () => void) => subscribe(key, notify), [key]);
   const raw = useSyncExternalStore(
     subscribeToKey,
     () => readRaw(key),
     () => null,
   );
-  const value = useMemo(() => parse(raw, initialRef.current), [raw]);
+  const value = useMemo(() => parse(raw, fallback), [raw, fallback]);
 
   const update = useCallback<SetValue<T>>(
     (next) => {
-      const prev = parse(readRaw(key), initialRef.current);
+      const prev = parse(readRaw(key), fallback);
       const resolved = typeof next === 'function' ? (next as (p: T) => T)(prev) : next;
       if (Object.is(resolved, prev)) return;
       writeRaw(key, JSON.stringify(resolved));
     },
-    [key],
+    [key, fallback],
   );
 
   return [value, update];
