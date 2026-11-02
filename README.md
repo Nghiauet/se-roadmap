@@ -66,9 +66,13 @@ All other UI is rendered from that array.
 
 | Key | Shape |
 |---|---|
-| `se-roadmap:bookmarks` | `string[]` of topic slugs |
-| `se-roadmap:notes` | `Record<slug, string>` |
-| `se-roadmap:progress` | `Record<slug, boolean>` |
-| `se-roadmap:theme` | next-themes preference |
+| `se-roadmap:bookmarks` | JSON `string[]` of topic slugs |
+| `se-roadmap:notes` | JSON `Record<slug, string>` |
+| `se-roadmap:progress` | JSON `Record<slug, boolean>` (an unticked topic stays as `false`) |
+| `se-roadmap:code-lang` | plain string `ts` or `python` (CodeTabs language) |
+| `theme` | plain string `dark` / `light`: next-themes' default key, not namespaced |
 
+These are what live visitors already have saved. Renaming a key or changing its
+format resets that value for every visitor (e.g. passing
+`STORAGE_KEYS.theme` as next-themes' `storageKey` would reset everyone's theme).
 Clearing site data for the domain wipes them all.
