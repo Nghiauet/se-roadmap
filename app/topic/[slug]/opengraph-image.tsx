@@ -18,8 +18,10 @@ export const dynamicParams = false;
 const DIFFICULTY = { 1: 'Beginner', 2: 'Intermediate', 3: 'Advanced' } as const;
 const TYPE_LABEL = { core: 'Concept', practice: 'Project', read: 'Reading' } as const;
 
-export default function TopicOg({ params }: { params: { slug: string } }) {
-  const topic = getTopic(params.slug);
+// Next 16 passes `params` to image routes as a Promise (it was a plain object in 14).
+export default async function TopicOg({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params;
+  const topic = getTopic(slug);
   if (!topic) {
     return new ImageResponse(<div>Not found</div>, { ...size });
   }
