@@ -19,7 +19,7 @@ import { CopyContentButton } from '@/components/topic/copy-content-button';
 import { NoteEditor } from '@/components/topic/note-editor';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
-type Params = { params: { slug: string } };
+type Params = { params: Promise<{ slug: string }> };
 
 export function generateStaticParams() {
   return ALL_SLUGS.map((slug) => ({ slug }));
@@ -84,7 +84,8 @@ function buildCopyPayload(topic: Topic, categoryLabel: string, rawMdx: string | 
   return lines.join('\n');
 }
 
-export function generateMetadata({ params }: Params): Metadata {
+export async function generateMetadata(props: Params): Promise<Metadata> {
+  const params = await props.params;
   const topic = getTopic(params.slug);
   if (!topic) return {};
 
@@ -125,7 +126,8 @@ export function generateMetadata({ params }: Params): Metadata {
   };
 }
 
-export default function TopicPage({ params }: Params) {
+export default async function TopicPage(props: Params) {
+  const params = await props.params;
   const topic = getTopic(params.slug);
   if (!topic) notFound();
 

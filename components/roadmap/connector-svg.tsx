@@ -6,7 +6,7 @@ import { motion, useReducedMotion } from 'framer-motion';
 type Point = { x: number; y: number };
 
 type Props = {
-  containerRef: React.RefObject<HTMLElement>;
+  containerRef: React.RefObject<HTMLElement | null>;
   pairs: [string, string][];
   colorVar: string;
 };

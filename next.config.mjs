@@ -1,8 +1,4 @@
 import createMDX from '@next/mdx';
-import remarkGfm from 'remark-gfm';
-import rehypeSlug from 'rehype-slug';
-import rehypeAutolinkHeadings from 'rehype-autolink-headings';
-import rehypePrettyCode from 'rehype-pretty-code';
 
 /** @type {import('rehype-pretty-code').Options} */
 const prettyCodeOptions = {
@@ -11,14 +7,17 @@ const prettyCodeOptions = {
   defaultLang: 'plaintext',
 };
 
+// Plugins are given by package name, not imported: Next 16 builds with Turbopack,
+// which can only pass plain, serializable loader options to the MDX loader
+// (imported plugin functions fail the build with "does not have serializable options").
 const withMDX = createMDX({
   extension: /\.mdx?$/,
   options: {
-    remarkPlugins: [remarkGfm],
+    remarkPlugins: ['remark-gfm'],
     rehypePlugins: [
-      rehypeSlug,
+      'rehype-slug',
       [
-        rehypeAutolinkHeadings,
+        'rehype-autolink-headings',
         {
           behavior: 'append',
           properties: {
@@ -28,7 +27,7 @@ const withMDX = createMDX({
           },
         },
       ],
-      [rehypePrettyCode, prettyCodeOptions],
+      ['rehype-pretty-code', prettyCodeOptions],
     ],
   },
 });

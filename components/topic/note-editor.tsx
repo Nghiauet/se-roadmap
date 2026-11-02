@@ -16,7 +16,7 @@ export function NoteEditor({ slug }: { slug: string }) {
   const [draft, setDraft] = useState('');
   const [status, setStatus] = useState<SaveStatus>('idle');
   const hydrated = useRef(false);
-  const savedTimer = useRef<ReturnType<typeof setTimeout>>();
+  const savedTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   useEffect(() => {
     if (!mounted || hydrated.current) return;
