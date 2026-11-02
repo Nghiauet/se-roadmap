@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 npm install                       # install deps
 npm run dev                       # http://localhost:3000
 npm run build && npm run start    # local production build
-npm run lint                      # next lint (no test script exists)
+npm run lint                      # ESLint CLI, eslint.config.mjs (no test script exists)
 
 docker compose up -d --build      # rebuild + run container on 127.0.0.1:46402
 docker compose logs -f se-roadmap # tail logs
@@ -29,7 +29,7 @@ Skipping any step — especially the rebuild — has burned us before; `next dev
 
 ## Architecture
 
-This is a **frontend-only, statically-generated** Next.js 14 (App Router) site. There is no backend, no API routes, no database. All user state lives in `localStorage`: bookmarks, notes and completion under the `se-roadmap:*` keys in `lib/storage-keys.ts`, the code-tab language under `se-roadmap:code-lang`, and the theme under next-themes' default key `theme` (formats in README → Storage keys; changing a key or format resets that value for every visitor). The site is reachable in production at `https://roadmap.wakeuplate.io.vn/` via a Cloudflare Tunnel + nginx reverse proxy stack that lives outside this repo at `../../nginx_setup` — the container only binds `127.0.0.1:46402`, never the public internet.
+This is a **frontend-only, statically-generated** Next.js 16 (App Router, React 19) site. There is no backend, no API routes, no database. All user state lives in `localStorage`: bookmarks, notes and completion under the `se-roadmap:*` keys in `lib/storage-keys.ts`, the code-tab language under `se-roadmap:code-lang`, and the theme under next-themes' default key `theme` (formats in README → Storage keys; changing a key or format resets that value for every visitor). The site is reachable in production at `https://roadmap.wakeuplate.io.vn/` via a Cloudflare Tunnel + nginx reverse proxy stack that lives outside this repo at `../../nginx_setup` — the container only binds `127.0.0.1:46402`, never the public internet.
 
 ### The curriculum is the spine
 
@@ -49,7 +49,7 @@ Three files together define every topic on the site, and they must stay in sync:
 
 ### MDX pipeline
 
-Configured in `next.config.mjs` via `@next/mdx`:
+Configured in `next.config.mjs` via `@next/mdx`. Plugins are listed by package name (strings), not imported: `next build` uses Turbopack, which can only pass serializable options to the MDX loader, so plugin options must stay plain JSON. Plugins:
 - `remark-gfm` (tables, task lists)
 - `rehype-slug` + `rehype-autolink-headings` (anchor links on headings)
 - `rehype-pretty-code` with Shiki, dual theme (`github-dark-dimmed` / `github-light`), `keepBackground: false` so code blocks inherit Tailwind styling.
@@ -60,7 +60,7 @@ Configured in `next.config.mjs` via `@next/mdx`:
 
 `hooks/use-local-storage.ts` is the foundation: one `useSyncExternalStore`-backed store per key shared by every hook instance in the tab (writes are computed from the latest stored value and notify all instances), the server snapshot during hydration (stored value arrives in the re-render after), cross-tab `storage` events, and an in-memory fallback on quota/privacy errors. Many components read the same key at once (the homepage has ~50 instances), so never give an instance its own copy that it writes back — that is how a homepage visit used to wipe progress and bookmarks. The feature-specific hooks (`use-bookmarks`, `use-notes`, `use-progress`) wrap it with the right key from `lib/storage-keys.ts`. **Always go through these hooks rather than touching `localStorage` directly** — the SSR-safety and cross-tab sync are easy to miss.
 
-Components that read this state must be Client Components (`'use client'`) and should guard against the pre-hydration empty state to avoid hydration mismatches (`hooks/use-has-mounted.ts` helps here).
+Components that read this state must be Client Components (`'use client'`) and should guard against the pre-hydration empty state to avoid hydration mismatches (`hooks/use-has-mounted.ts` helps here; it is `useSyncExternalStore`-based, so it turns true in the same render in which stored values arrive). Don't copy a stored value into local state from an effect (that is how `NoteEditor` used to depend on render order); show the stored value until the visitor edits.
 
 ### Styling
 

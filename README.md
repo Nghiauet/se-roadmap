@@ -4,7 +4,7 @@ An interactive, frontend-only roadmap for learning backend software engineering.
 42 curated topics across 7 categories, with bookmarks, notes, and progress
 stored in your browser (`localStorage`, no account).
 
-Built with Next.js 14 (App Router) + TypeScript + Tailwind + shadcn/ui + Framer Motion.
+Built with Next.js 16 (App Router) + React 19 + TypeScript + Tailwind + shadcn/ui + Framer Motion.
 
 ---
 
