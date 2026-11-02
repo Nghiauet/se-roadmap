@@ -71,4 +71,4 @@ Components that read this state must be Client Components (`'use client'`) and s
 
 ### Docker image
 
-`Dockerfile` is a 3-stage build (deps → builder → runner) producing a Next.js `output: 'standalone'` runtime on `node:20-alpine`, running as the non-root `nextjs` user, listening on `:3000` inside the container. `docker-compose.yml` binds it to `127.0.0.1:46402` only. The healthcheck `wget`s `/` — if it starts failing, the standalone build is missing files (most likely from a new dependency that didn't get traced).
+`Dockerfile` is a 3-stage build (deps → builder → runner) producing a Next.js `output: 'standalone'` runtime on `node:24-alpine` (Node 24 LTS; Node 20 reached end-of-life in April 2026), running as the non-root `nextjs` user, listening on `:3000` inside the container. `docker-compose.yml` binds it to `127.0.0.1:46402` only. The healthcheck `wget`s `/` — if it starts failing, the standalone build is missing files (most likely from a new dependency that didn't get traced).
