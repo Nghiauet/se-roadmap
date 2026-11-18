@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-npm install                       # install deps
+npm install                       # install deps — first: on 2026-11-19 host node_modules still had Next 14.2.35, the lockfile pins 16.4.3
 npm run dev                       # http://localhost:3000
 npm run build && npm run start    # local production build
 npm run lint                      # ESLint CLI, eslint.config.mjs (no test script exists)
@@ -23,13 +23,13 @@ Do all three before reporting success, in this order:
 
 1. **Test it carefully.** Run `npm run dev`, exercise the changed surface in a browser (golden path + obvious edge cases), and watch the terminal for type/runtime errors. Run `npm run lint` if touching `.ts`/`.tsx`. For visual changes, compare against `playwright/before/*.png` and drop new shots into `playwright/after/`.
 2. **Commit to git.** Use a meaningful, English commit message that explains the *why*, not just the *what*. Don't bundle unrelated changes.
-3. **Rebuild the Docker container.** `docker compose up -d --build`, then `curl -I http://127.0.0.1:46402/` to confirm a 200. The standalone build can surface issues that `next dev` hides (e.g. missing files in `output: 'standalone'` traces).
+3. **Rebuild the Docker container — this redeploys the live roadmap.wakeuplate.io.vn.** Tag the running image first (`docker tag "$(docker inspect -f '{{.Image}}' se-roadmap)" se-roadmap:rollback-$(date +%F)`), then `docker compose up -d --build`, then `curl -I http://127.0.0.1:46402/` to confirm a 200. Rollback: `git revert` + rebuild, or re-tag the rollback image and `docker compose up -d --no-build`. The standalone build can surface issues that `next dev` hides (e.g. missing files in `output: 'standalone'` traces).
 
 Skipping any step — especially the rebuild — has burned us before; `next dev` and the Docker image diverge.
 
 ## Architecture
 
-This is a **frontend-only, statically-generated** Next.js 16 (App Router, React 19) site. Next 16 ships its docs in `node_modules/next/dist/docs/`; APIs differ from Next 14 (async `params`, also in `opengraph-image`), so check there before writing Next-specific code. There is no backend, no API routes, no database. All user state lives in `localStorage`: bookmarks, notes and completion under the `se-roadmap:*` keys in `lib/storage-keys.ts`, the code-tab language under `se-roadmap:code-lang`, and the theme under next-themes' default key `theme` (formats in README → Storage keys; changing a key or format resets that value for every visitor). The site is reachable in production at `https://roadmap.wakeuplate.io.vn/` via a Cloudflare Tunnel + nginx reverse proxy stack that lives outside this repo at `../../nginx_setup` — the container only binds `127.0.0.1:46402`, never the public internet.
+This is a **frontend-only, statically-generated** Next.js 16 (App Router, React 19) site. Next 16 ships its docs in `node_modules/next/dist/docs/` (once `npm install` has brought host `node_modules` up to the lockfile); APIs differ from Next 14 (async `params`, also in `opengraph-image`), so check there before writing Next-specific code. There is no backend, no API routes, no database. All user state lives in `localStorage`: bookmarks, notes and completion under the `se-roadmap:*` keys in `lib/storage-keys.ts`, the code-tab language under `se-roadmap:code-lang`, and the theme under next-themes' default key `theme` (formats in README → Storage keys; changing a key or format resets that value for every visitor). The site is reachable in production at `https://roadmap.wakeuplate.io.vn/` via a Cloudflare Tunnel + nginx reverse proxy stack that lives outside this repo at `../../nginx_setup` — the container only binds `127.0.0.1:46402`, never the public internet.
 
 ### The curriculum is the spine
 
